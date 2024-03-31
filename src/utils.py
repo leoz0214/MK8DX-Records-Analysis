@@ -1,6 +1,8 @@
 """Utility functions throughout the project."""
 import hashlib
 import json
+import pathlib
+import sqlite3
 
 from const import COURSES_FILE
 
@@ -27,3 +29,23 @@ def get_lap_count(course: str) -> int:
     This is to handle the Baby Park special case of 7 laps.
     """
     return 7 if course == BABY_PARK else 3
+
+
+class Database:
+    """Sqlite3 database wrapper."""
+
+    def __init__(self, database_path: pathlib.Path) -> None:
+        self.path = database_path
+
+    def __enter__(self) -> sqlite3.Cursor:
+        """Start of database processing context manager."""
+        self.connection = sqlite3.connect(self.path)
+        cursor = self.connection.cursor()
+        return cursor
+    
+    def __exit__(self, exception: Exception | None, *_) -> None:
+        """Context manager exited - commit if no error occurred."""
+        if exception is None:
+            self.connection.commit()
+        self.connection.close()
+        self.connection = None
