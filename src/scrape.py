@@ -6,7 +6,6 @@ import datetime as dt
 import logging
 import time
 import urllib.parse
-from dataclasses import dataclass
 from timeit import default_timer as timer
 
 import lxml
@@ -14,7 +13,8 @@ import requests as rq
 from bs4 import BeautifulSoup
 
 from const import SNAPSHOT_FOLDER, SCRAPE_LOG_FILE
-from utils import get_courses, get_lap_count, Database
+from utils import (
+    get_courses, get_lap_count, Record, save_records, remove_old_snapshots)
 
 
 URL = "https://mkwrs.com/mk8dx/display.php"
@@ -22,25 +22,6 @@ SECONDS_PER_SCRAPE = 2
 MAX_REQUEST_ATTEMPTS = 3
 EXPECTED_COLUMNS = 14
 BABY_PARK_TOP_EXPECTED_COLUMNS = 15
-
-
-@dataclass
-class Record:
-    """Represents a world record for a particular course and cubic capacity."""
-    course: str
-    is200: bool
-    date: dt.date | None
-    time: int # milliseconds
-    player: str
-    country: str
-    days: int
-    lap_times: tuple[int] | None # all milliseconds
-    coins: tuple[int] | None
-    mushrooms: tuple[int] | None
-    character: str | None
-    kart: str | None
-    tyres: str | None
-    glider: str | None
 
 
 def get_soup(course: str, is200: bool) -> BeautifulSoup:
@@ -77,6 +58,8 @@ def get_common_data(data, lap_count: int = 3) -> tuple:
     seconds, milliseconds = seconds_ms.split('"')
     time_ = (
         int(minutes) * 60 * 1000 + int(seconds) * 1000 + int(milliseconds))
+    video_link_a = data[1].find("a")
+    video_link = video_link_a["href"] if video_link_a is not None else None
     player = urllib.parse.unquote(
         data[2].find(
             "a", href=lambda href: href and "?player=" in href)["href"]
@@ -87,7 +70,7 @@ def get_common_data(data, lap_count: int = 3) -> tuple:
     lap_times = ()
     for i in range(5, 5 + lap_count):
         lap_string = data[i].text
-        if lap_string == "-":
+        if lap_string == "-" or not lap_string:
             # Missing lap data
             lap_times = None
             break
@@ -96,7 +79,7 @@ def get_common_data(data, lap_count: int = 3) -> tuple:
         coins = tuple(map(int, data[5 + lap_count].text.split("-")))
     except ValueError:
         coins = None
-    return date, time_, player, country, days, lap_times, coins
+    return date, time_, video_link, player, country, days, lap_times, coins
 
 
 def scrape_baby_park(course: str, is200: bool, table) -> list[Record]:
@@ -113,7 +96,7 @@ def scrape_baby_park(course: str, is200: bool, table) -> list[Record]:
         i += 1
         if len(top_row_data) != BABY_PARK_TOP_EXPECTED_COLUMNS:
             continue
-        date, time_, player, country, days, lap_times, coins = (
+        date, time_, video_link, player, country, days, lap_times, coins = (
             get_common_data(top_row_data, 7))
         bottom_row = rows[i]
         bottom_row_data = bottom_row.find_all("td")
@@ -130,8 +113,8 @@ def scrape_baby_park(course: str, is200: bool, table) -> list[Record]:
         glider_string = bottom_row_data[2].text
         glider = glider_string if glider_string != "-" else None
         record = Record(
-            course, is200, date, time_, player, country, days,
-            lap_times, coins, mushrooms, character, kart, tyres, glider)
+            course, is200, date, time_, player, country, days, lap_times,
+            coins, mushrooms, character, kart, tyres, glider, video_link)
         records.append(record)
     return records
 
@@ -149,7 +132,7 @@ def scrape_course(course: str, is200: bool) -> list[Record]:
         if len(data) != EXPECTED_COLUMNS:
             # Not a world record column, something else e.g. headings.
             continue
-        date, time_, player, country, days, lap_times, coins = (
+        date, time_, video_link, player, country, days, lap_times, coins = (
             get_common_data(data))
         try:
             mushrooms = tuple(map(int, data[6 + lap_count].text.split("-")))
@@ -164,45 +147,10 @@ def scrape_course(course: str, is200: bool) -> list[Record]:
         glider_string = data[10 + lap_count].text
         glider = glider_string if glider_string != "-" else None
         record = Record(
-            course, is200, date, time_, player, country, days,
-            lap_times, coins, mushrooms, character, kart, tyres, glider)
+            course, is200, date, time_, player, country, days, lap_times,
+            coins, mushrooms, character, kart, tyres, glider, video_link)
         records.append(record)
     return records
-
-
-def save(records: list[Record]) -> None:
-    """Saves all records to a snapshot database."""
-    # Use UTC to keep things consistent
-    date_time_string = dt.datetime.utcnow().isoformat().replace(":", "")
-    database_path = SNAPSHOT_FOLDER / f"{date_time_string}.db"
-    with Database(database_path) as cursor:
-        cursor.execute(
-            """
-            CREATE TABLE data(
-                course INTEGER, is200 INTEGER, date DATE, time INTEGER,
-                player TEXT, country TEXT, days INTEGER, lap_times TEXT,
-                coins TEXT, mushrooms TEXT, character TEXT, kart TEXT,
-                tyres TEXT, glider TEXT
-            )""")
-        save_records = []
-        courses = get_courses()
-        for record in records:
-            course_id = courses.index(record.course)
-            lap_times = (
-                None if record.lap_times is None else str(record.lap_times))
-            coins = None if record.coins is None else str(record.coins)
-            mushrooms = (
-                None if record.mushrooms is None else str(record.mushrooms))
-            save_record = (
-                course_id, record.is200, record.date, record.time,
-                record.player, record.country, record.days,
-                lap_times, coins, mushrooms, record.character, record.kart,
-                record.tyres, record.glider)
-            save_records.append(save_record)
-        cursor.executemany(
-            f"""
-            INSERT INTO data VALUES ({','.join('?' * len(save_records[0]))})
-            """, save_records)
 
 
 def main() -> None:
@@ -229,7 +177,8 @@ def main() -> None:
                 return
             stop = timer()
             time.sleep(max(SECONDS_PER_SCRAPE - (stop - start), 0))
-    save(records)
+    save_records(records)
+    remove_old_snapshots()
     logging.info("Successfully saved all records to database.")
 
 

@@ -1,3 +1,4 @@
 **/__pycache__
 data/*
 !data/_courses.json
+!data/_cups.json
