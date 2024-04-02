@@ -160,6 +160,8 @@ def get_course_cc_records(course: str, is200: bool) -> list[Record]:
     records = []
     for record in db_records:
         date, time_, player, country, days = record[2:7]
+        if date is not None:
+            date = dt.date.fromisoformat(date)
         lap_times = ast.literal_eval(record[7] or "None")
         coins = ast.literal_eval(record[8] or "None")
         mushrooms = ast.literal_eval(record[9] or "None")

@@ -33,10 +33,10 @@ class AnalysisGui(tk.Tk):
         font.nametofont("TkDefaultFont").config(family="Lato", size=11)
         ttk.Style().configure("TNotebook.Tab", font=lato(15))
         self.title(TITLE)
-        self.notebook_frame = tk.Frame(self, width=1600, height=900)
+        self.notebook_frame = tk.Frame(self, width=1800, height=900)
         self.notebook_frame.pack_propagate(False)
         self.notebook = ttk.Notebook(
-            self.notebook_frame, width=1600, height=900)
+            self.notebook_frame, width=1800, height=900)
         tabs = [Tab(self)]
         self.notebook.add(tabs[0], text="New")
 
