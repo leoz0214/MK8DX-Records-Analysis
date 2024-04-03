@@ -2,6 +2,7 @@
 import tkinter as tk
 from tkinter import ttk
 
+import matplotlib.dates as mdates
 import pyglet
 
 from const import LATO_FONT_FILE
@@ -61,3 +62,20 @@ class RankTable(tk.Frame):
         self.label.grid(row=0, column=0, columnspan=2)
         self.treeview.grid(row=1, column=0)
         self.scrollbar.grid(row=1, column=1, sticky="ns")
+
+
+class MillisecondsFormatter(mdates.DateFormatter):
+    """
+    Monkey patches the matplotlib date formatter to allow for milliseconds.
+    Note: assumes last part of the string is indeed microseconds.
+    Resolution of lap/finish times is indeed milliseconds only
+    (no truncation issues).
+    """
+
+    def __call__(self, x, pos=0):
+        """
+        Monkey patched exactly from source except strips last 3 digits
+        to show ms instead of us: may break in future... be warned!
+        """
+        result = mdates.num2date(x, self.tz).strftime(self.fmt)[:-3]
+        return mdates._wrap_in_tex(result) if self._usetex else result

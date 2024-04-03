@@ -1,16 +1,27 @@
 """Data analysis for course/CC."""
+import datetime as dt
+import io
+import platform
 import tkinter as tk
 from collections import Counter
 from tkinter import ttk
+from typing import Callable
 
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import matplotlib.dates as mdates
 from matplotlib import pyplot as plt
+from PIL import ImageTk
 
 import main
 from gutils import (
     lato, RankTable, COUNT_COL_WIDTH,  PLAYER_COL_WIDTH,
-    COUNTRY_COL_WIDTH, BUILD_COL_WIDTH, PERCENTAGE_COL_WIDTH)
+    COUNTRY_COL_WIDTH, BUILD_COL_WIDTH, PERCENTAGE_COL_WIDTH,
+    MillisecondsFormatter)
 from utils import get_course_cc_records, ms_to_finish_time, Record
+
+
+GRAPH_DATES_INTERVALS = 8
+GRAPH_IMAGE_DPI = 75
+GRAPH_TIME_FORMAT = f"%{'#' if platform.system() == 'Windows' else '-'}M:%S.%f"
 
 
 def sort_by_days_held(
@@ -52,6 +63,17 @@ def sort_by_records_count(records: list[Record], field: str) -> list[tuple]:
         (key, count, round(count / len(records) * 100, 2))
         for key, count in records_counts.items()]
     return records_count_records
+
+
+def set_up_dates_xaxis(dates: list[dt.date]) -> None:
+    """Sets the date x-axis, given a list of dates."""
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+    plt.gca().xaxis.set_major_locator(mdates.DayLocator())
+    days_range = (dates[-1] - dates[0]).days
+    plt.gca().xaxis.set_major_locator(
+        mdates.DayLocator(
+            interval=max(days_range // GRAPH_DATES_INTERVALS, 1)))
+    plt.gcf().autofmt_xdate()
 
 
 class CourseCcAnalysis(tk.Frame):
@@ -212,27 +234,132 @@ class GraphsToplevel(tk.Toplevel):
 
     def __init__(self, master: CourseCcAnalysis) -> None:
         super().__init__()
+        self.master: CourseCcAnalysis = master
         title = f"{master.course} {200 if master.is200 else 150}cc - Graphs"
         self.title(title)
         self.title_label = tk.Label(self, font=lato(25, True), text=title)
 
-        import matplotlib.dates as mdates
+        self.time_against_date_graph = GraphFrame(
+            self, self.plot_time_against_date)
+        self.laps_against_date_graph = GraphFrame(
+            self, self.plot_laps_against_date)
+        self.coins_against_date_graph = GraphFrame(
+            self, self.plot_coins_against_date)
+        self.mushrooms_against_date_graph = GraphFrame(
+            self, self.plot_mushrooms_against_date)
+        
+        self.title_label.grid(row=0, column=0, columnspan=2, padx=5, pady=5)
+        self.time_against_date_graph.grid(row=1, column=0, padx=5, pady=5)
+        self.laps_against_date_graph.grid(row=1, column=1, padx=5, pady=5)
+        self.coins_against_date_graph.grid(row=2, column=0, padx=5, pady=5)
+        self.mushrooms_against_date_graph.grid(row=2, column=1, padx=5, pady=5)
 
-        plt.figure()
+    def plot_time_against_date(self) -> None:
+        """Plots the finish time against date graph."""
         times = []
         dates = []
-        for record in master.records:
-            if record.date is not None:
-                times.append(record.time)
-                dates.append(record.date)
-        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
-        plt.gca().xaxis.set_major_locator(mdates.DayLocator())
-        plt.gca().xaxis.set_major_locator(mdates.DayLocator(interval = 180))
+        for record in self.master.records:
+            if record.date is None:
+                continue
+            # Use dummy datetimes (only time matters).
+            minutes, ms = divmod(record.time, 60000)
+            seconds, ms = divmod(ms, 1000)
+            times.append(
+                dt.datetime(1970, 1, 1,
+                    minute=minutes,second=seconds, microsecond=ms * 1000))
+            dates.append(record.date)
+        plt.clf()
+        set_up_dates_xaxis(dates)
+        plt.gca().yaxis.set_major_formatter(
+            MillisecondsFormatter(GRAPH_TIME_FORMAT))
         plt.plot(dates, times)
-        plt.gcf().autofmt_xdate()
-        figure = plt.gcf()
-        graph = FigureCanvasTkAgg(figure, self)
+        plt.title("Time against Date")
+        plt.xlabel("Date")
+        plt.ylabel("Time")
 
-        self.title_label.pack()
-        graph.get_tk_widget().pack()
-        
+    def plot_laps_against_date(self) -> None:
+        """Plots the laps against date graph."""
+        laps = []
+        dates = []
+        for record in self.master.records:
+            if record.date is None or record.lap_times is None:
+                continue
+            for i, lap_time in enumerate(record.lap_times):
+                # Again, Use dummy datetimes (only time matters).
+                seconds, ms = divmod(lap_time, 1000)
+                dummy_date_time = dt.datetime(
+                    1970, 1, 1, second=seconds, microsecond=ms * 1000)
+                if i >= len(laps):
+                    laps.append([dummy_date_time])
+                else:
+                    laps[i].append(dummy_date_time)
+            dates.append(record.date)
+        plt.clf()
+        set_up_dates_xaxis(dates)
+        plt.gca().yaxis.set_major_formatter(MillisecondsFormatter("%S.%f"))
+        for n, lap_times in enumerate(laps, 1):
+            plt.plot(dates, lap_times, label=f"Lap {n}")
+        plt.title("Lap Times against Date")
+        plt.xlabel("Date")
+        plt.ylabel("Lap Time")
+        plt.legend(loc="upper left")
+    
+    def _plot_item_against_date(self, field: str) -> None:
+        # Too similar to repeat - plot coins/mushrooms against date.
+        counts = []
+        dates = []
+        for record in self.master.records:
+            if record.date is None or getattr(record, field) is None:
+                continue
+            for i, lap_count in enumerate(getattr(record, field)):
+                if i >= len(counts):
+                    counts.append([lap_count])
+                else:
+                    counts[i].append(lap_count)
+            dates.append(record.date)
+        plt.clf()
+        set_up_dates_xaxis(dates)
+        # Ensure y-axis integer ticks only (makes sense - discrete data).
+        # Max 10 coins, max 3 mushrooms
+        plt.yticks(range(4) if field == "mushrooms" else range(11))
+        for n, lap_counts in enumerate(counts, 1):
+            plt.plot(dates, lap_counts, label=f"Lap {n}")
+        plt.title(f"{field.capitalize()} against Date")
+        plt.xlabel("Date")
+        plt.ylabel(field.capitalize())
+        plt.legend(loc="upper left")
+    
+    def plot_coins_against_date(self) -> None:
+        """Plots the coins against date graph."""
+        self._plot_item_against_date("coins")
+
+    def plot_mushrooms_against_date(self) -> None:
+        """Plots the mushrooms against date graph."""
+        self._plot_item_against_date("mushrooms")
+
+
+class GraphFrame(tk.Frame):
+    """
+    Stores a matplotlib image graph with the option to open interactive mode.
+    """
+
+    def __init__(
+        self, master: GraphsToplevel, plot_command: Callable
+    ) -> None:
+        super().__init__(master)
+        self.plot_command = plot_command
+        self.plot_command()
+        with io.BytesIO() as f:
+            plt.savefig(f, format="png", dpi=GRAPH_IMAGE_DPI)
+            f.seek(0)
+            self.graph_image = ImageTk.PhotoImage(file=f, format="png")
+        self.graph_image_label = tk.Label(self, image=self.graph_image)
+        self.view_button = ttk.Button(
+            self, text="View", command=self.view)
+        self.graph_image_label.pack(padx=5, pady=5)
+        self.view_button.pack(padx=5, pady=5)
+
+    def view(self) -> None:
+        """Opens interactive window for particular graph."""
+        self.plot_command()
+        plt.show(block=False)

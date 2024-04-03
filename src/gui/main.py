@@ -16,6 +16,13 @@ from utils import get_courses, get_cups
 
 TITLE = "MK8DX Records Analysis"
 MAX_TABS = 10
+NOTEBOOK_TAB_SIZE_BY_TABS_OPEN = {
+    8: 8,
+    7: 9,
+    6: 10,
+    5: 12,
+    0: 15
+}
 
 
 class GeneralMode(enum.Enum):
@@ -31,17 +38,51 @@ class AnalysisGui(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         font.nametofont("TkDefaultFont").config(family="Lato", size=11)
-        ttk.Style().configure("TNotebook.Tab", font=lato(15))
+        ttk.Style().configure(
+            "TNotebook.Tab", font=lato(NOTEBOOK_TAB_SIZE_BY_TABS_OPEN[0]))
         self.title(TITLE)
+        self.menu = AnalysisMenu(self)
+        self.config(menu=self.menu)
         self.notebook_frame = tk.Frame(self, width=1800, height=900)
         self.notebook_frame.pack_propagate(False)
         self.notebook = ttk.Notebook(
             self.notebook_frame, width=1800, height=900)
-        tabs = [Tab(self)]
-        self.notebook.add(tabs[0], text="New")
+        self.tabs = [Tab(self)]
+        self.notebook.add(self.tabs[0], text="New")
 
         self.notebook.pack()
         self.notebook_frame.pack()
+    
+    def new_analysis(self) -> None:
+        """Opens a new analysis tab allowing concurrent analysis."""
+        for tab in self.tabs:
+            if self.notebook.tab(tab, option="text") == "New":
+                # Switch to existing 'New' preparatory tab.
+                self.notebook.select(tab)
+                return
+        if len(self.tabs) == MAX_TABS:
+            messagebox.showerror("Error", f"Maximum of {MAX_TABS} tabs open.")
+            return
+        new_tab = Tab(self)
+        self.notebook.add(new_tab, text="New")
+        self.notebook.select(new_tab)
+        self.tabs.append(new_tab)
+        # Adjust tab size as required (so they can all fit in decently).
+        for tabs_open, size in NOTEBOOK_TAB_SIZE_BY_TABS_OPEN.items():
+            if len(self.tabs) >= tabs_open:
+                ttk.Style().configure("TNotebook.Tab", font=lato(size))
+                break
+
+
+class AnalysisMenu(tk.Menu):
+    """Menu for the main GUI."""
+
+    def __init__(self, master: AnalysisGui) -> None:
+        super().__init__(master)
+        self.menu = tk.Menu(self, tearoff=False)
+        self.menu.add_command(
+            label="New Analysis", command=master.new_analysis)
+        self.add_cascade(label="Menu", menu=self.menu)
 
 
 class Tab(tk.Frame):
@@ -83,8 +124,11 @@ class Tab(tk.Frame):
         """Starts course/CC analysis upon selecting course/CC."""
         self.start()
         try:
-            course_cc.CourseCcAnalysis(
-                self, toplevel.course, toplevel.is200).pack()
+            analysis_frame = course_cc.CourseCcAnalysis(
+                self, toplevel.course, toplevel.is200)
+            analysis_frame.pack()
+            self.master.notebook.tab(
+                self, text=analysis_frame.title.cget("text"))
         except Exception as e:
             messagebox.showerror(
                 "Error",
