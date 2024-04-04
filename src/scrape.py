@@ -77,6 +77,8 @@ def get_common_data(data, lap_count: int = 3) -> tuple:
         lap_times += (round(float(lap_string) * 1000),)
     try:
         coins = tuple(map(int, data[5 + lap_count].text.split("-")))
+        if len(coins) != lap_count:
+            coins = None
     except ValueError:
         coins = None
     return date, time_, video_link, player, country, days, lap_times, coins
@@ -102,6 +104,8 @@ def scrape_baby_park(course: str, is200: bool, table) -> list[Record]:
         bottom_row_data = bottom_row.find_all("td")
         try:
             mushrooms = tuple(map(int, bottom_row_data[0].text.split("-")))
+            if len(mushrooms) != 7:
+                mushrooms = None
         except ValueError:
             mushrooms = None
         character_string = top_row_data[13].text
@@ -136,6 +140,8 @@ def scrape_course(course: str, is200: bool) -> list[Record]:
             get_common_data(data))
         try:
             mushrooms = tuple(map(int, data[6 + lap_count].text.split("-")))
+            if len(mushrooms) != 3:
+                mushrooms = None
         except ValueError:
             mushrooms = None
         character_string = data[7 + lap_count].text

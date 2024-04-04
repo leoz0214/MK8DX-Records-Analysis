@@ -146,6 +146,13 @@ def get_most_recent_snapshot() -> pathlib.Path:
             "No records snapshots found. Please run the scraping script.")
 
 
+def get_most_recent_snapshot_date_time() -> dt.datetime:
+    """Returns the date/time of the most recent snapshot."""
+    snapshot = get_most_recent_snapshot()
+    filename = snapshot.stem
+    return dt.datetime.strptime(filename, "%Y-%m-%dT%H%M%S.%f")
+
+
 def get_course_cc_records(course: str, is200: bool) -> list[Record]:
     """
     Returns a list containing all world records

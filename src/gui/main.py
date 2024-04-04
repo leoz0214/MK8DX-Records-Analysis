@@ -10,7 +10,7 @@ from typing import Callable
 # Very important line - DO NOT DELETE. Needed to access parent modules.
 import __init__
 import course_cc
-from gutils import lato
+from gutils import lato, DateRangeSelect
 from utils import get_courses, get_cups
 
 
@@ -43,6 +43,8 @@ class AnalysisGui(tk.Tk):
         self.title(TITLE)
         self.menu = AnalysisMenu(self)
         self.config(menu=self.menu)
+        # Binds Ctrl+N to open a new analysis.
+        self.bind("<Control-n>", lambda *_: self.new_analysis())
         self.notebook_frame = tk.Frame(self, width=1800, height=900)
         self.notebook_frame.pack_propagate(False)
         self.notebook = ttk.Notebook(
@@ -67,11 +69,24 @@ class AnalysisGui(tk.Tk):
         self.notebook.add(new_tab, text="New")
         self.notebook.select(new_tab)
         self.tabs.append(new_tab)
-        # Adjust tab size as required (so they can all fit in decently).
+        self.update_tabs_size()
+
+    def close_tab(self, tab: "Tab") -> None:
+        """Closes and deletes a given tab."""
+        self.tabs.remove(tab)
+        self.notebook.forget(tab)
+        if not self.tabs:
+            # Ensure at least one tab opened - the new analysis tab.
+            self.new_analysis()
+        else:
+            self.update_tabs_size()
+
+    def update_tabs_size(self) -> None:
+        """Adjust tab size as required (so they can all fit in decently)."""
         for tabs_open, size in NOTEBOOK_TAB_SIZE_BY_TABS_OPEN.items():
             if len(self.tabs) >= tabs_open:
                 ttk.Style().configure("TNotebook.Tab", font=lato(size))
-                break
+                return
 
 
 class AnalysisMenu(tk.Menu):
@@ -81,7 +96,7 @@ class AnalysisMenu(tk.Menu):
         super().__init__(master)
         self.menu = tk.Menu(self, tearoff=False)
         self.menu.add_command(
-            label="New Analysis", command=master.new_analysis)
+            label="New Analysis (Ctrl+N)", command=master.new_analysis)
         self.add_cascade(label="Menu", menu=self.menu)
 
 
@@ -103,9 +118,12 @@ class Tab(tk.Frame):
         self.general_button = ttk.Button(
             self, text="General", style="tab.TButton",
             command=self.prepare_general_analysis)
+        self.close_tab_button = ttk.Button(
+            self, text="Close", command=self.close)
         self.label.pack(padx=25, pady=25)
         self.course_cc_button.pack(padx=15, pady=15)
         self.general_button.pack(padx=15, pady=15)
+        self.close_tab_button.pack(padx=15, pady=50)
     
     def start(self) -> None:
         """Registers start: destroys initial labels and buttons."""
@@ -113,6 +131,11 @@ class Tab(tk.Frame):
         self.label.destroy()
         self.course_cc_button.destroy()
         self.general_button.destroy()
+        self.close_tab_button.destroy()
+    
+    def close(self) -> None:
+        """Closes the tab."""
+        self.master.close_tab(self)
     
     def prepare_course_cc_analysis(self) -> None:
         """Prepares analysis for a specific course/CC combination."""
@@ -161,10 +184,12 @@ class CourseCcSelectionToplevel(tk.Toplevel):
             self, font=lato(40, True), text="Course/CC Selection")
         self.course_selection_frame = CourseSelectionFrame(self)
         self.cc_selection_frame = CcSelectionFrame(self)
+        self.date_selection_frame = DateRangeSelect(self)
         self.start_button = ttk.Button(self, text="Start", command=self.start)
         self.label.pack(pady=5)
         self.course_selection_frame.pack(pady=5)
         self.cc_selection_frame.pack(pady=5)
+        self.date_selection_frame.pack(pady=5)
         self.start_button.pack(pady=5)
     
     def start(self) -> None:

@@ -16,7 +16,9 @@ from gutils import (
     lato, RankTable, COUNT_COL_WIDTH,  PLAYER_COL_WIDTH,
     COUNTRY_COL_WIDTH, BUILD_COL_WIDTH, PERCENTAGE_COL_WIDTH,
     MillisecondsFormatter)
-from utils import get_course_cc_records, ms_to_finish_time, Record
+from utils import (
+    get_course_cc_records, ms_to_finish_time, Record,
+    get_most_recent_snapshot_date_time)
 
 
 GRAPH_DATES_INTERVALS = 8
@@ -97,7 +99,7 @@ class CourseCcAnalysis(tk.Frame):
             record.glider for record in self.records if record.glider)
 
         self.title = tk.Label(
-            self, font=lato(40, True),
+            self, font=lato(25, True),
             text=f"{self.course} {200 if self.is200 else 150}cc")
         self.current_records_frame = CurrentRecordsFrame(self)
 
@@ -115,6 +117,11 @@ class CourseCcAnalysis(tk.Frame):
             self, text="Open Graphs", command=self.open_graphs)
         self.export_button = ttk.Button(
             self, text="Export", command=self.export)
+        self.close_button = ttk.Button(
+            self, text="Close", command=tab.close)
+        data_time = get_most_recent_snapshot_date_time().replace(microsecond=0)
+        self.time_label = tk.Label(
+            self, text=f"Data collected at: {data_time}")
 
         self.title.pack(pady=5)
         self.current_records_frame.pack(pady=5)
@@ -122,6 +129,8 @@ class CourseCcAnalysis(tk.Frame):
         self.tables_frame.pack(pady=5)
         self.graphs_button.pack(pady=5)
         self.export_button.pack(pady=5)
+        self.close_button.pack(pady=5)
+        self.time_label.pack(pady=5)
     
     def open_graphs(self) -> None:
         """Opens the graphs toplevel to view graphs based on the stats."""
