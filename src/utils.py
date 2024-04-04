@@ -40,6 +40,10 @@ def get_cups() -> list[str]:
     return cups
 
 
+COURSES = get_courses()
+CUPS = get_cups()
+
+
 def get_lap_count(course: str) -> int:
     """
     Returns the number of laps a course has
@@ -110,9 +114,8 @@ def save_records(records: list[Record]) -> None:
                 tyres TEXT, glider TEXT, video_link TEXT
             )""")
         save_records = []
-        courses = get_courses()
         for record in records:
-            course_id = courses.index(record.course)
+            course_id = COURSES.index(record.course)
             lap_times = (
                 None if record.lap_times is None else str(record.lap_times))
             coins = None if record.coins is None else str(record.coins)
@@ -153,28 +156,99 @@ def get_most_recent_snapshot_date_time() -> dt.datetime:
     return dt.datetime.strptime(filename, "%Y-%m-%dT%H%M%S.%f")
 
 
-def get_course_cc_records(course: str, is200: bool) -> list[Record]:
+def process_db_record(record: tuple) -> Record:
+    """Converts a database record into a dataclass object."""
+    course_id, is200, date, time_, player, country, days = record[:7]
+    course = COURSES[course_id]
+    if date is not None:
+        date = dt.date.fromisoformat(date)
+    lap_times = ast.literal_eval(record[7] or "None")
+    coins = ast.literal_eval(record[8] or "None")
+    mushrooms = ast.literal_eval(record[9] or "None")
+    character, kart, tyres, glider, video_link = record[10:]
+    record = Record(
+        course, is200, date, time_, player, country, days, lap_times,
+        coins, mushrooms, character, kart, tyres, glider, video_link)
+    return record
+
+
+def get_course_cc_records(
+    course: str, is200: bool,
+    min_date: dt.date | None, max_date: dt.date | None
+) -> list[Record]:
     """
     Returns a list containing all world records
     for a given course/CC combination.
     """
-    course_id = get_courses().index(course)
+    course_id = COURSES.index(course)
     database_path = get_most_recent_snapshot()
+    params = [course_id, is200]
+    where_parts = ["course = ?", "is200 = ?"]
+    if min_date is not None:
+        params.append(min_date)
+        where_parts.append("date >= ?")
+    if max_date is not None:
+        params.append(max_date)
+        where_parts.append("date <= ?")
     with Database(database_path) as cursor:
         db_records = cursor.execute(
-            "SELECT * FROM data WHERE course = ? AND is200 = ?",
-            (course_id, is200)).fetchall()
-    records = []
-    for record in db_records:
-        date, time_, player, country, days = record[2:7]
-        if date is not None:
-            date = dt.date.fromisoformat(date)
-        lap_times = ast.literal_eval(record[7] or "None")
-        coins = ast.literal_eval(record[8] or "None")
-        mushrooms = ast.literal_eval(record[9] or "None")
-        character, kart, tyres, glider, video_link = record[10:]
-        record = Record(
-            course, is200, date, time_, player, country, days, lap_times,
-            coins, mushrooms, character, kart, tyres, glider, video_link)
-        records.append(record)
+            f"SELECT * FROM data WHERE {' AND '.join(where_parts)}",
+            params).fetchall()
+    records = list(map(process_db_record, db_records))
     return records
+
+
+def get_cc_records(
+    is200: bool, min_date: dt.date | None, max_date: dt.date | None
+) -> None:
+    """Returns all records from all courses for a given cubic capacity."""
+    database_path = get_most_recent_snapshot()
+    params = [is200]
+    where_parts = ["is200 = ?"]
+    if min_date is not None:
+        params.append(min_date)
+        where_parts.append("date >= ?")
+    if max_date is not None:
+        params.append(max_date)
+        where_parts.append("date <= ?")
+    with Database(database_path) as cursor:
+        db_records = cursor.execute(
+            f"SELECT * FROM data WHERE {' AND '.join(where_parts)}",
+            params).fetchall()
+    records = list(map(process_db_record, db_records))
+    return records
+
+
+def get_150cc_records(
+    min_date: dt.date | None, max_date: dt.date | None
+) -> list[Record]:
+    """Returns all 150cc records from all courses within a given date range."""
+    return get_cc_records(False, min_date, max_date)
+
+
+def get_200cc_records(
+    min_date: dt.date | None, max_date: dt.date | None
+) -> list[Record]:
+    """Returns all 200cc records from all courses within a given date range."""
+    return get_cc_records(True, min_date, max_date)
+
+
+def get_uniques(records: list[Record]) -> tuple[set]:
+    """
+    Returns unique players, countries, characters, karts, tyres and gliders.
+    They are all returned as sets, so order is not preserved.
+    """
+    unique_players = set(record.player for record in records)
+    unique_countries = set(record.country for record in records)
+    # Ignore 'None'
+    unique_characters = set(
+        record.character for record in records if record.character)
+    unique_karts = set(
+        record.kart for record in records if record.kart)
+    unique_tyres = set(
+        record.tyres for record in records if record.tyres)
+    unique_gliders = set(
+        record.glider for record in records if record.glider)
+    return (
+        unique_players, unique_countries, unique_characters,
+        unique_karts, unique_tyres, unique_gliders)

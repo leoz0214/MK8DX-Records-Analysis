@@ -1,24 +1,32 @@
 """Data analysis for course/CC."""
+import csv
 import datetime as dt
+import enum
 import io
 import platform
 import tkinter as tk
-from collections import Counter
+from tkinter import filedialog
+from tkinter import messagebox
 from tkinter import ttk
 from typing import Callable
 
 import matplotlib.dates as mdates
+import openpyxl
+import openpyxl.styles
 from matplotlib import pyplot as plt
 from PIL import ImageTk
 
 import main
 from gutils import (
-    lato, RankTable, COUNT_COL_WIDTH,  PLAYER_COL_WIDTH,
-    COUNTRY_COL_WIDTH, BUILD_COL_WIDTH, PERCENTAGE_COL_WIDTH,
-    MillisecondsFormatter)
+    lato, TablesFrame, MillisecondsFormatter, get_date_range_string,
+    UpdateDateRangeToplevel, bool_to_state, get_raw_records_columns,
+    DAYS_BY_PLAYER_COLUMNS, RECORDS_BY_PLAYER_COLUMNS, DAYS_BY_COUNTRY_COLUMNS,
+    RECORDS_BY_COUNTRY_COLUMNS, RECORDS_BY_CHARACTER_COLUMNS,
+    RECORDS_BY_KART_COLUMNS, RECORDS_BY_TYRES_COLUMNS,
+    RECORDS_BY_GLIDER_COLUMNS,)
 from utils import (
-    get_course_cc_records, ms_to_finish_time, Record,
-    get_most_recent_snapshot_date_time)
+    get_course_cc_records, ms_to_finish_time, get_lap_count,
+    get_most_recent_snapshot_date_time, get_uniques)
 
 
 GRAPH_DATES_INTERVALS = 8
@@ -26,45 +34,26 @@ GRAPH_IMAGE_DPI = 75
 GRAPH_TIME_FORMAT = f"%{'#' if platform.system() == 'Windows' else '-'}M:%S.%f"
 
 
-def sort_by_days_held(
-    records: list[Record], uniques: set[str], field: str
-) -> list[tuple]:
-    """Returns records ranking days by player or country."""
-    if not uniques:
-        return []
-    days_by = dict.fromkeys(uniques, 0)
-    total_days = 0
-    for record in records:
-        days_by[getattr(record, field)] += record.days
-        total_days += record.days
-    # Sorts from most days held to least.
-    days_by = dict(
-        sorted(days_by.items(), key=lambda item: item[1], reverse=True))
-    days_by_records = [
-        (key, days, round(days / total_days * 100, 2))
-        for key, days in days_by.items()]
-    return days_by_records
+class ExportTable(enum.Enum):
+    # Various tables that can be exported as CSV (one) or XLSX (sheets).
+    raw_records = "Raw Records"
+    days_by_player = "Days by Player"
+    records_by_player = "Records by Player"
+    days_by_country = "Days by Country"
+    records_by_country = "Records by Country"
+    records_by_character = "Records by Character"
+    records_by_kart = "Records by Kart"
+    records_by_tyres = "Records by Tyres"
+    records_by_glider = "Records by Glider"
 
 
-def sort_by_records_count(records: list[Record], field: str) -> list[tuple]:
-    """
-    Returns records ranking number of records by player, country,
-    character etc.
-    """
-    records_counts = Counter(getattr(record, field) for record in records)
-    if None in records_counts:
-        # Ignore empty values.
-        records_counts.pop(None)
-    if not records:
-        # Somehow not a single record has the relevant data - no return.
-        return []
-    # Sorts from most records to least.
-    records_counts = dict(
-        sorted(records_counts.items(), key=lambda item: item[1], reverse=True))
-    records_count_records = [
-        (key, count, round(count / len(records) * 100, 2))
-        for key, count in records_counts.items()]
-    return records_count_records
+COURSE_CC_EXPORT_TABLES = (
+    ExportTable.raw_records, ExportTable.days_by_player,
+    ExportTable.records_by_player, ExportTable.days_by_country,
+    ExportTable.records_by_country, ExportTable.records_by_character,
+    ExportTable.records_by_kart, ExportTable.records_by_tyres,
+    ExportTable.records_by_glider
+)
 
 
 def set_up_dates_xaxis(dates: list[dt.date]) -> None:
@@ -81,23 +70,22 @@ def set_up_dates_xaxis(dates: list[dt.date]) -> None:
 class CourseCcAnalysis(tk.Frame):
     """Displays course/CC records insights and allows for data exporting."""
 
-    def __init__(self, tab: main.Tab, course: str, is200: bool) -> None:
+    def __init__(
+        self, tab: main.Tab, course: str, is200: bool,
+        min_date: dt.date | None, max_date: dt.date | None
+    ) -> None:
         super().__init__(tab)
         self.course = course
         self.is200 = is200
-        self.records = get_course_cc_records(self.course, self.is200)
-        self.unique_players = set(record.player for record in self.records)
-        self.unique_countries = set(record.country for record in self.records)
-        # Ignore 'None'
-        unique_characters = set(
-            record.character for record in self.records if record.character)
-        unique_karts = set(
-            record.kart for record in self.records if record.kart)
-        unique_tyres = set(
-            record.tyres for record in self.records if record.tyres)
-        unique_gliders = set(
-            record.glider for record in self.records if record.glider)
-
+        self.min_date = min_date
+        self.max_date = max_date
+        self.tab = tab
+        self.records = get_course_cc_records(
+            self.course, self.is200, self.min_date, self.max_date)
+        (
+            self.unique_players, self.unique_countries, unique_characters,
+            unique_karts, unique_tyres, unique_gliders
+        ) = get_uniques(self.records)
         self.title = tk.Label(
             self, font=lato(25, True),
             text=f"{self.course} {200 if self.is200 else 150}cc")
@@ -113,24 +101,13 @@ class CourseCcAnalysis(tk.Frame):
                 f"Tyres: {len(unique_tyres)} | "
                 f"Gliders: {len(unique_gliders)}"))
         self.tables_frame = TablesFrame(self)
-        self.graphs_button = ttk.Button(
-            self, text="Open Graphs", command=self.open_graphs)
-        self.export_button = ttk.Button(
-            self, text="Export", command=self.export)
-        self.close_button = ttk.Button(
-            self, text="Close", command=tab.close)
-        data_time = get_most_recent_snapshot_date_time().replace(microsecond=0)
-        self.time_label = tk.Label(
-            self, text=f"Data collected at: {data_time}")
+        self.options_frame = OptionsFrame(self)
 
         self.title.pack(pady=5)
         self.current_records_frame.pack(pady=5)
         self.info_label.pack(pady=5)
         self.tables_frame.pack(pady=5)
-        self.graphs_button.pack(pady=5)
-        self.export_button.pack(pady=5)
-        self.close_button.pack(pady=5)
-        self.time_label.pack(pady=5)
+        self.options_frame.pack(pady=5)
     
     def open_graphs(self) -> None:
         """Opens the graphs toplevel to view graphs based on the stats."""
@@ -138,7 +115,55 @@ class CourseCcAnalysis(tk.Frame):
 
     def export(self) -> None:
         """Allows exportation of the data to various file formats."""
-        pass
+        ExportationToplevel(self)
+
+    def update_date_range(
+        self, min_date: dt.date | None, max_date: dt.date | None
+    ) -> None:
+        """Updates the date range by refreshing the window."""
+        # Dummy change, then call refresh data.
+        self.min_date = min_date
+        self.max_date = max_date
+        self.refresh_data()
+
+    def refresh_data(self) -> None:
+        """Refreshes the window - in case new snapshot is available."""
+        self.destroy()
+        CourseCcAnalysis(
+            self.tab, self.course, self.is200,
+            self.min_date, self.max_date).pack()
+
+
+class OptionsFrame(tk.Frame):
+    """Various buttons and info to interact with analysis tab."""
+
+    def __init__(self, master: CourseCcAnalysis) -> None:
+        super().__init__(master)
+        self.graphs_button = ttk.Button(
+            self, text="Open Graphs", command=master.open_graphs)
+        self.export_button = ttk.Button(
+            self, text="Export", command=master.export)
+        self.close_button = ttk.Button(
+            self, text="Close", command=master.tab.close)
+        date_range = get_date_range_string(master.min_date, master.max_date)
+        self.date_range_label = tk.Label(
+            self, text=f"Date Range: {date_range}", width=30)
+        self.update_date_range_button = ttk.Button(
+            self, text="Update",
+            command=lambda: UpdateDateRangeToplevel(
+                master.update_date_range, master.min_date, master.max_date))
+        data_time = get_most_recent_snapshot_date_time().replace(microsecond=0)
+        self.data_time_label = tk.Label(
+            self, text=f"Data collected at: {data_time}", width=30)
+        self.refresh_data_button = ttk.Button(
+            self, text="Refresh", command=master.refresh_data)
+        self.graphs_button.grid(row=0, column=0, padx=5, pady=5)
+        self.export_button.grid(row=0, column=1, padx=5, pady=5)
+        self.close_button.grid(row=0, column=2, padx=5, pady=5)
+        self.date_range_label.grid(row=1, column=0, padx=5, pady=5)
+        self.update_date_range_button.grid(row=1, column=1, padx=5, pady=5)
+        self.data_time_label.grid(row=1, column=2, padx=5, pady=5)
+        self.refresh_data_button.grid(row=1, column=3, padx=5, pady=5)
 
 
 class CurrentRecordsFrame(tk.Frame):
@@ -146,14 +171,25 @@ class CurrentRecordsFrame(tk.Frame):
 
     def __init__(self, master: CourseCcAnalysis) -> None:
         super().__init__(master)
-        current_record_time = min(
-            master.records, key=lambda record: record.time).time
-        current_records = [
-            record for record in master.records
-                if record.time == current_record_time]
-        self.label = tk.Label(
-            self, font=lato(15, True),
-            text=f"Current record{'s' if len(current_records) > 1 else ''}")
+        try:
+            current_record_time = min(
+                master.records, key=lambda record: record.time).time
+            current_records = [
+                record for record in master.records
+                    if record.time == current_record_time]
+            text = f"Current record{'s' if len(current_records) > 1 else ''}"
+            self.label = tk.Label(self, font=lato(15, True), text=text)
+            if len(current_records) > 2:
+                # n-way tie where n > 2, not enough space to display, skip.
+                # Really very rare... 3 way ties have happened before for sure.
+                text = f"{len(current_records)}-way tie! (too much to display)"
+                self.label = tk.Label(self, font=lato(15, True), text=text)
+                current_records = []
+        except ValueError:
+            current_records = []
+            self.label = tk.Label(
+                self, font=lato(15, True),
+                text="No records within the dates!")
         self.label.pack()
         for record in current_records:
             finish_time = ms_to_finish_time(record.time)
@@ -175,67 +211,6 @@ class CurrentRecordsFrame(tk.Frame):
                 video_link_entry.insert(0, record.video_link)
                 video_link_entry.config(state="readonly")
                 video_link_entry.pack()
-        
-
-class TablesFrame(tk.Frame):
-    """Various tables providing various rank stats."""
-
-    def __init__(self, master: CourseCcAnalysis) -> None:
-        super().__init__(master)
-        days_by_player_records = sort_by_days_held(
-            master.records, master.unique_players, "player")
-        self.days_by_player_frame = RankTable(
-            self, "Days by Player", ("Player", "Days Held", "%"),
-            days_by_player_records, column_widths=(
-                PLAYER_COL_WIDTH, COUNT_COL_WIDTH, PERCENTAGE_COL_WIDTH))
-        player_record_counts = sort_by_records_count(master.records, "player")
-        self.player_records_counts_frame = RankTable(
-            self, "Records by Player", ("Player", "Records", "%"),
-            player_record_counts, column_widths=(
-                PLAYER_COL_WIDTH, COUNT_COL_WIDTH, PERCENTAGE_COL_WIDTH))
-        days_by_country_records = sort_by_days_held(
-            master.records, master.unique_countries, "country")
-        self.days_by_country_frame = RankTable(
-            self, "Days by Country", ("Country", "Days Held", "%"),
-           days_by_country_records, column_widths=(
-                COUNTRY_COL_WIDTH, COUNT_COL_WIDTH, PERCENTAGE_COL_WIDTH))
-        country_record_counts = (
-            sort_by_records_count(master.records, "country"))
-        self.country_records_counts_frame = RankTable(
-            self, "Records by Country", ("Country", "Records", "%"),
-            country_record_counts, column_widths=(
-                COUNTRY_COL_WIDTH, COUNT_COL_WIDTH, PERCENTAGE_COL_WIDTH))
-
-        character_record_counts = (
-            sort_by_records_count(master.records, "character"))
-        self.character_records_counts_frame = RankTable(
-            self, "Records by Character", ("Character", "Records", "%"),
-            character_record_counts, column_widths=(
-                BUILD_COL_WIDTH, COUNT_COL_WIDTH, PERCENTAGE_COL_WIDTH))
-        kart_record_counts = sort_by_records_count(master.records, "kart")
-        self.kart_records_counts_frame = RankTable(
-            self, "Records by Kart", ("Kart", "Records", "%"),
-            kart_record_counts, column_widths=(
-                BUILD_COL_WIDTH, COUNT_COL_WIDTH, PERCENTAGE_COL_WIDTH))
-        tyres_record_counts = sort_by_records_count(master.records, "tyres")
-        self.tyres_records_counts_frame = RankTable(
-            self, "Records by Tyres", ("Tyres", "Records", "%"),
-            tyres_record_counts, column_widths=(
-                BUILD_COL_WIDTH, COUNT_COL_WIDTH, PERCENTAGE_COL_WIDTH))
-        glider_record_counts = sort_by_records_count(master.records, "glider")
-        self.glider_records_counts_frame = RankTable(
-            self, "Records by Glider", ("Glider", "Records", "%"),
-            glider_record_counts, column_widths=(
-                BUILD_COL_WIDTH, COUNT_COL_WIDTH, PERCENTAGE_COL_WIDTH))
-        self.days_by_player_frame.grid(row=0, column=0, padx=3, pady=3)
-        self.player_records_counts_frame.grid(row=0, column=1, padx=3, pady=3)
-        self.days_by_country_frame.grid(row=0, column=2, padx=3, pady=3)
-        self.country_records_counts_frame.grid(row=0, column=3, padx=3, pady=3)
-        self.character_records_counts_frame.grid(
-            row=1, column=0, padx=3, pady=3)
-        self.kart_records_counts_frame.grid(row=1, column=1, padx=3, pady=3)
-        self.tyres_records_counts_frame.grid(row=1, column=2, padx=3, pady=3)
-        self.glider_records_counts_frame.grid(row=1, column=3, padx=3, pady=3)
 
 
 class GraphsToplevel(tk.Toplevel):
@@ -263,8 +238,10 @@ class GraphsToplevel(tk.Toplevel):
         self.coins_against_date_graph.grid(row=2, column=0, padx=5, pady=5)
         self.mushrooms_against_date_graph.grid(row=2, column=1, padx=5, pady=5)
 
-    def plot_time_against_date(self) -> None:
-        """Plots the finish time against date graph."""
+    def plot_time_against_date(self) -> bool:
+        """
+        Plots the finish time against date graph, returning True if successful.
+        """
         times = []
         dates = []
         for record in self.master.records:
@@ -277,6 +254,8 @@ class GraphsToplevel(tk.Toplevel):
                 dt.datetime(1970, 1, 1,
                     minute=minutes,second=seconds, microsecond=ms * 1000))
             dates.append(record.date)
+        if not times:
+            return False
         plt.clf()
         set_up_dates_xaxis(dates)
         plt.gca().yaxis.set_major_formatter(
@@ -285,8 +264,9 @@ class GraphsToplevel(tk.Toplevel):
         plt.title("Time against Date")
         plt.xlabel("Date")
         plt.ylabel("Time")
+        return True
 
-    def plot_laps_against_date(self) -> None:
+    def plot_laps_against_date(self) -> bool:
         """Plots the laps against date graph."""
         laps = []
         dates = []
@@ -303,6 +283,8 @@ class GraphsToplevel(tk.Toplevel):
                 else:
                     laps[i].append(dummy_date_time)
             dates.append(record.date)
+        if not laps:
+            return False
         plt.clf()
         set_up_dates_xaxis(dates)
         plt.gca().yaxis.set_major_formatter(MillisecondsFormatter("%S.%f"))
@@ -312,8 +294,9 @@ class GraphsToplevel(tk.Toplevel):
         plt.xlabel("Date")
         plt.ylabel("Lap Time")
         plt.legend(loc="upper left")
+        return True
     
-    def _plot_item_against_date(self, field: str) -> None:
+    def _plot_item_against_date(self, field: str) -> bool:
         # Too similar to repeat - plot coins/mushrooms against date.
         counts = []
         dates = []
@@ -326,6 +309,8 @@ class GraphsToplevel(tk.Toplevel):
                 else:
                     counts[i].append(lap_count)
             dates.append(record.date)
+        if not counts:
+            return False
         plt.clf()
         set_up_dates_xaxis(dates)
         # Ensure y-axis integer ticks only (makes sense - discrete data).
@@ -337,14 +322,15 @@ class GraphsToplevel(tk.Toplevel):
         plt.xlabel("Date")
         plt.ylabel(field.capitalize())
         plt.legend(loc="upper left")
+        return True
     
-    def plot_coins_against_date(self) -> None:
+    def plot_coins_against_date(self) -> bool:
         """Plots the coins against date graph."""
-        self._plot_item_against_date("coins")
+        return self._plot_item_against_date("coins")
 
-    def plot_mushrooms_against_date(self) -> None:
+    def plot_mushrooms_against_date(self) -> bool:
         """Plots the mushrooms against date graph."""
-        self._plot_item_against_date("mushrooms")
+        return self._plot_item_against_date("mushrooms")
 
 
 class GraphFrame(tk.Frame):
@@ -357,7 +343,11 @@ class GraphFrame(tk.Frame):
     ) -> None:
         super().__init__(master)
         self.plot_command = plot_command
-        self.plot_command()
+        success = self.plot_command()
+        if not success:
+            self.label = tk.Label(self, font=lato(25), text="No data")
+            self.label.pack()
+            return
         with io.BytesIO() as f:
             plt.savefig(f, format="png", dpi=GRAPH_IMAGE_DPI)
             f.seek(0)
@@ -372,3 +362,173 @@ class GraphFrame(tk.Frame):
         """Opens interactive window for particular graph."""
         self.plot_command()
         plt.show(block=False)
+
+
+class ExportationToplevel(tk.Toplevel):
+    """Exportation to CSV, XLSX, DOCX and PDF."""
+
+    def __init__(self, master: CourseCcAnalysis) -> None:
+        super().__init__()
+        self.master: CourseCcAnalysis = master
+        self.title(f"{master.title.cget('text')} - Data Exportation")
+        self.grab_set()
+        self.notebook = ttk.Notebook(self)
+        self.table_exportation_frame = TableExportationFrame(self)
+        self.document_exportation_frame = DocumentExportationFrame(self)
+        self.notebook.add(self.table_exportation_frame, text="CSV/XLSX")
+        self.notebook.add(self.document_exportation_frame, text="DOCX/PDF")
+        self.notebook.pack()
+
+
+class TableExportationFrame(tk.Frame):
+    """Exportation to CSV or XLSX."""
+
+    def __init__(self, master: ExportationToplevel) -> None:
+        super().__init__(master)
+        self.title = tk.Label(self, font=lato(25, True), text="Export Tables")
+        self.info_label = tk.Label(
+            self, text=(
+                "Select one or more tables below to export.\n"
+                "Note: CSV is limited to one table, XLSX unlimited."))
+        self.options_frame = TableExportationOptions(self)
+        self.export_csv_button = ttk.Button(
+            self, text="Export CSV", command=self.export_csv)
+        self.export_xlsx_button = ttk.Button(
+            self, text="Export XLSX", command=self.export_xlsx)
+        self.update_button_states()
+        self.title.pack(pady=5)
+        self.info_label.pack(pady=5)
+        self.options_frame.pack(pady=5)
+        self.export_csv_button.pack(pady=5)
+        self.export_xlsx_button.pack(pady=5)
+    
+    def update_button_states(self) -> None:
+        """Updates the export button states."""
+        selected_tables = self.options_frame.tables
+        # Exactly one table selected for CSV export to be allowed.
+        self.export_csv_button.config(
+            state=bool_to_state(len(selected_tables) == 1))
+        # One or more tables selected for XLSX export to be allowed.
+        self.export_xlsx_button.config(state=bool_to_state(selected_tables))
+    
+    def export_csv(self) -> None:
+        """Exports a single table to CSV."""
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv", filetypes=(("CSV", ".csv"),),
+            title="Save CSV", parent=self)
+        if not file_path:
+            return
+        table = self.options_frame.tables[0]
+        columns, records = self.get_columns_and_records(table)
+        try:
+            with open(file_path, "w", encoding="utf8") as f:
+                writer = csv.writer(f, lineterminator="\n")
+                writer.writerow(columns)
+                writer.writerows(records)
+        except Exception as e:
+            messagebox.showerror(
+                "Error",
+                    "Unfortunately, an error occurred "
+                    f"while saving the CSV: {e}", master=self)
+
+    def export_xlsx(self) -> None:
+        """Exports one or more tables to XLSX (multiple sheets)."""
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=(("XLSX", ".xlsx"),),
+            title="Save XLSX", parent=self)
+        if not file_path:
+            return
+        try:
+            workbook = openpyxl.Workbook()
+            workbook.remove(workbook["Sheet"])
+            tables = self.options_frame.tables
+            for table in tables:
+                columns, records = self.get_columns_and_records(table)
+                sheet = workbook.create_sheet(table.value)
+                for i, column in enumerate(columns, 1):
+                    cell = sheet.cell(row=1, column=i)
+                    cell.value = column
+                    cell.font = openpyxl.styles.Font(bold=True)
+                for record in records:
+                    sheet.append(record)
+            workbook.save(file_path)
+        except Exception as e:
+            messagebox.showerror(
+                "Error",
+                    "Unfortunately, an error occurred "
+                    f"while saving the XLSX: {e}", master=self)
+    
+    def get_columns_and_records(
+        self, table: ExportTable
+    ) -> tuple[tuple[str], list[tuple]]:
+        """Returns the columns and records for a given table."""
+        if table == ExportTable.raw_records:
+            laps = get_lap_count(self.master.master.course)
+            columns = get_raw_records_columns(laps)
+            records = []
+            for record in self.master.master.records:
+                export_record = [
+                    record.course, record.is200, record.date, record.time,
+                    record.player, record.country, record.days]
+                for field in ("lap_times", "coins", "mushrooms"):
+                    if getattr(record, field) is None:
+                        export_record.extend([None] * laps)
+                    else:
+                        export_record.extend(getattr(record, field))
+                export_record.extend(
+                    (record.character, record.kart, record.tyres,
+                        record.glider, record.video_link))
+                records.append(export_record)
+            return columns, records
+        columns = {
+            ExportTable.days_by_player: DAYS_BY_PLAYER_COLUMNS,
+            ExportTable.records_by_player: RECORDS_BY_PLAYER_COLUMNS,
+            ExportTable.days_by_country: DAYS_BY_COUNTRY_COLUMNS,
+            ExportTable.records_by_country: RECORDS_BY_COUNTRY_COLUMNS,
+            ExportTable.records_by_character: RECORDS_BY_CHARACTER_COLUMNS,
+            ExportTable.records_by_kart: RECORDS_BY_KART_COLUMNS,
+            ExportTable.records_by_tyres: RECORDS_BY_TYRES_COLUMNS,
+            ExportTable.records_by_glider: RECORDS_BY_GLIDER_COLUMNS
+        }[table]
+        tables: TablesFrame = self.master.master.tables_frame
+        records = {
+            ExportTable.days_by_player: tables.days_by_player_records,
+            ExportTable.records_by_player: tables.player_record_counts,
+            ExportTable.days_by_country: tables.days_by_country_records,
+            ExportTable.records_by_country: tables.country_record_counts,
+            ExportTable.records_by_character: tables.character_record_counts,
+            ExportTable.records_by_kart: tables.kart_record_counts,
+            ExportTable.records_by_tyres: tables.tyres_record_counts,
+            ExportTable.records_by_glider: tables.glider_record_counts
+        }[table]
+        return columns, records
+
+
+class TableExportationOptions(tk.Frame):
+    """Contains the checkbuttons to select the tables to export."""
+
+    def __init__(self, master: TableExportationFrame) -> None:
+        super().__init__(master)
+        self._selected = [
+            tk.BooleanVar(value=False)
+            for _ in range(len(COURSE_CC_EXPORT_TABLES))]
+        for var in self._selected:
+            var.trace("w", lambda *_: master.update_button_states())
+        for i, table in enumerate(COURSE_CC_EXPORT_TABLES):
+            checkbutton = ttk.Checkbutton(
+                self, text=table.value, variable=self._selected[i])
+            checkbutton.pack()
+    
+    @property
+    def tables(self) -> list[ExportTable]:
+        return [
+            table
+            for var, table in zip(self._selected, COURSE_CC_EXPORT_TABLES)
+                if var.get()]
+
+
+class DocumentExportationFrame(tk.Frame):
+    """Exportation to DOCX or PDF."""
+
+    def __init__(self, master: ExportationToplevel) -> None:
+        super().__init__(master)

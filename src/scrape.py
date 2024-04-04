@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 
 from const import SNAPSHOT_FOLDER, SCRAPE_LOG_FILE
 from utils import (
-    get_courses, get_lap_count, Record, save_records, remove_old_snapshots)
+    COURSES, get_lap_count, Record, save_records, remove_old_snapshots)
 
 
 URL = "https://mkwrs.com/mk8dx/display.php"
@@ -168,9 +168,8 @@ def main() -> None:
         encoding="utf8", level=logging.INFO,
         format= "%(asctime)s: %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S")
-    courses = get_courses()
     records = []
-    for course in courses:
+    for course in COURSES:
         for cc in (150, 200):
             start = timer()
             try:

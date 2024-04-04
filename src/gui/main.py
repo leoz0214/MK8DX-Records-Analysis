@@ -10,8 +10,9 @@ from typing import Callable
 # Very important line - DO NOT DELETE. Needed to access parent modules.
 import __init__
 import course_cc
+import general
 from gutils import lato, DateRangeSelect
-from utils import get_courses, get_cups
+from utils import COURSES, CUPS
 
 
 TITLE = "MK8DX Records Analysis"
@@ -148,7 +149,9 @@ class Tab(tk.Frame):
         self.start()
         try:
             analysis_frame = course_cc.CourseCcAnalysis(
-                self, toplevel.course, toplevel.is200)
+                self, toplevel.course, toplevel.is200,
+                toplevel.date_selection_frame.start_date,
+                toplevel.date_selection_frame.end_date)
             analysis_frame.pack()
             self.master.notebook.tab(
                 self, text=analysis_frame.title.cget("text"))
@@ -167,9 +170,18 @@ class Tab(tk.Frame):
     ) -> None:
         """Starts general analysis after 150cc, 200cc, or 150+200cc set."""
         self.start()
-        self.started = True
-        mode = toplevel.mode
-        print(mode)
+        try:
+            analysis_frame = general.GeneralAnalysisFrame(
+                self, toplevel.mode, toplevel.date_selection_frame.start_date,
+                toplevel.date_selection_frame.end_date)
+            analysis_frame.pack()
+            self.master.notebook.tab(
+                self, text=analysis_frame.title.cget("text"))
+        except Exception as e:
+            messagebox.showerror(
+                "Error",
+                    "Unfortunately, an error occurred "
+                    f"while loading the general analysis: {e}")
     
 
 class CourseCcSelectionToplevel(tk.Toplevel):
@@ -212,10 +224,8 @@ class CourseSelectionFrame(tk.Frame):
     def __init__(self, master: CourseCcSelectionToplevel) -> None:
         super().__init__(master)
         self._course = tk.StringVar(value="Mario Kart Stadium")
-        courses = get_courses()
-        cups = get_cups()
-        for i, cup in enumerate(cups):
-            cup_courses = courses[i*4:(i+1)*4]
+        for i, cup in enumerate(CUPS):
+            cup_courses = COURSES[i*4:(i+1)*4]
             cup_courses_frame = CupCoursesFrame(self, cup, cup_courses)
             cup_courses_frame.grid(row=i//6, column=i%6, padx=5, pady=5)
     
@@ -282,7 +292,10 @@ class GeneralSelectionToplevel(tk.Toplevel):
                 self, text=text, value=i,
                 variable=self._mode, width=20, style="mode.TRadiobutton")
             radiobutton.pack(pady=5)
+        self.date_selection_frame = DateRangeSelect(self)
         self.start_button = ttk.Button(self, text="Start", command=self.start)
+
+        self.date_selection_frame.pack(pady=5)
         self.start_button.pack(pady=5)
     
     def start(self) -> None:
