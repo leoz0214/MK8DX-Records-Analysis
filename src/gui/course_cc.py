@@ -4,10 +4,16 @@ import enum
 import io
 import platform
 import tkinter as tk
+from dataclasses import dataclass
+from tkinter import filedialog
+from tkinter import messagebox
 from tkinter import ttk
 from typing import Callable
 
+import docx
+import docx.document
 import matplotlib.dates as mdates
+from docx.shared import Inches
 from matplotlib import pyplot as plt
 from PIL import ImageTk
 
@@ -18,7 +24,8 @@ from gutils import (
     DAYS_BY_PLAYER_COLS, RECORDS_BY_PLAYER_COLS, DAYS_BY_COUNTRY_COLS,
     RECORDS_BY_COUNTRY_COLS, RECORDS_BY_CHARACTER_COLS,
     RECORDS_BY_KART_COLS, RECORDS_BY_TYRES_COLS,
-    RECORDS_BY_GLIDER_COLS, TableExportationFrame)
+    RECORDS_BY_GLIDER_COLS, TableExportationFrame,
+    TableDocumentExportationOptions, add_doctable, save_docx_as_pdf)
 from utils import (
     get_course_cc_records, ms_to_finish_time, get_lap_count,
     get_most_recent_snapshot_date_time, get_uniques)
@@ -27,10 +34,16 @@ from utils import (
 GRAPH_DATES_INTERVALS = 8
 GRAPH_IMAGE_DPI = 75
 GRAPH_TIME_FORMAT = f"%{'#' if platform.system() == 'Windows' else '-'}M:%S.%f"
+# Document export graph size
+GRAPH_WIDTH = Inches(5)
+GRAPH_HEIGHT = Inches(3.75)
 
 
 class ExportTable(enum.Enum):
-    # Various tables that can be exported as CSV (one) or XLSX (sheets).
+    """
+    Various tables that can be exported as CSV (one) or XLSX (sheets).
+    Also borrowed in the export document table section.
+    """
     raw_records = "Raw Records"
     days_by_player = "Days by Player"
     records_by_player = "Records by Player"
@@ -42,13 +55,30 @@ class ExportTable(enum.Enum):
     records_by_glider = "Records by Glider"
 
 
-COURSE_CC_EXPORT_TABLES = (
-    ExportTable.raw_records, ExportTable.days_by_player,
+class ExportGraph(enum.Enum):
+    """Graphs that can be exported as part of the document."""
+    times = "Time against Date"
+    lap_times = "Lap Times against Date"
+    coins = "Coins against Date"
+    mushrooms = "Mushrooms against Date"
+
+
+@dataclass
+class BasicDocumentOptions:
+    """Basic document options: generate current records and summary stats."""
+    current_records: bool
+    summary_stats: bool
+
+
+DOCUMENT_COURSE_CC_EXPORT_TABLES = (
+    ExportTable.days_by_player,
     ExportTable.records_by_player, ExportTable.days_by_country,
     ExportTable.records_by_country, ExportTable.records_by_character,
     ExportTable.records_by_kart, ExportTable.records_by_tyres,
     ExportTable.records_by_glider
 )
+COURSE_CC_EXPORT_TABLES = (
+    ExportTable.raw_records,) + DOCUMENT_COURSE_CC_EXPORT_TABLES
 EXPORT_TABLES_COLUMNS = {
     ExportTable.days_by_player: DAYS_BY_PLAYER_COLS,
     ExportTable.records_by_player: RECORDS_BY_PLAYER_COLS,
@@ -60,6 +90,11 @@ EXPORT_TABLES_COLUMNS = {
     ExportTable.records_by_glider: RECORDS_BY_GLIDER_COLS
 }
 
+COURSE_CC_EXPORT_GRAPHS = (
+    ExportGraph.times, ExportGraph.lap_times,
+    ExportGraph.coins, ExportGraph.mushrooms
+)
+
 
 def set_up_dates_xaxis(dates: list[dt.date]) -> None:
     """Sets the date x-axis, given a list of dates."""
@@ -70,6 +105,22 @@ def set_up_dates_xaxis(dates: list[dt.date]) -> None:
         mdates.DayLocator(
             interval=max(days_range // GRAPH_DATES_INTERVALS, 1)))
     plt.gcf().autofmt_xdate()
+
+
+def get_records_from_tables(
+    tables: "TablesFrame", table: ExportTable
+) -> list[tuple]:
+    """Returns the records given the tables frame and export table."""
+    return {
+        ExportTable.days_by_player: tables.days_by_player_records,
+        ExportTable.records_by_player: tables.player_record_counts,
+        ExportTable.days_by_country: tables.days_by_country_records,
+        ExportTable.records_by_country: tables.country_record_counts,
+        ExportTable.records_by_character: tables.character_record_counts,
+        ExportTable.records_by_kart: tables.kart_record_counts,
+        ExportTable.records_by_tyres: tables.tyres_record_counts,
+        ExportTable.records_by_glider: tables.glider_record_counts
+    }[table]
 
 
 class CourseCcAnalysis(tk.Frame):
@@ -179,24 +230,28 @@ class CurrentRecordsFrame(tk.Frame):
         try:
             current_record_time = min(
                 master.records, key=lambda record: record.time).time
-            current_records = [
+            self.current_records = [
                 record for record in master.records
                     if record.time == current_record_time]
-            text = f"Current record{'s' if len(current_records) > 1 else ''}"
+            text = (
+                f"Current record{'s' if len(self.current_records) > 1 else ''}"
+            )
             self.label = tk.Label(self, font=lato(15, True), text=text)
-            if len(current_records) > 2:
+            if len(self.current_records) > 2:
                 # n-way tie where n > 2, not enough space to display, skip.
                 # Really very rare... 3 way ties have happened before for sure.
-                text = f"{len(current_records)}-way tie! (too much to display)"
+                text = (
+                    f"{len(self.current_records)}-way tie! "
+                    "(too much to display)")
                 self.label = tk.Label(self, font=lato(15, True), text=text)
-                current_records = []
+                self.current_records = []
         except ValueError:
-            current_records = []
+            self.current_records = []
             self.label = tk.Label(
                 self, font=lato(15, True),
                 text="No records within the dates!")
         self.label.pack()
-        for record in current_records:
+        for record in self.current_records:
             finish_time = ms_to_finish_time(record.time)
             lap_times = record.lap_times
             if lap_times is not None:
@@ -352,6 +407,7 @@ class GraphFrame(tk.Frame):
         if not success:
             self.label = tk.Label(self, font=lato(25), text="No data")
             self.label.pack()
+            self.graph_image = None
             return
         with io.BytesIO() as f:
             plt.savefig(f, format="png", dpi=GRAPH_IMAGE_DPI)
@@ -414,17 +470,8 @@ class CourseCcTableExportationFrame(TableExportationFrame):
                 records.append(export_record)
             return columns, records
         columns = EXPORT_TABLES_COLUMNS[table]
-        tables: TablesFrame = self.master.master.tables_frame
-        records = {
-            ExportTable.days_by_player: tables.days_by_player_records,
-            ExportTable.records_by_player: tables.player_record_counts,
-            ExportTable.days_by_country: tables.days_by_country_records,
-            ExportTable.records_by_country: tables.country_record_counts,
-            ExportTable.records_by_character: tables.character_record_counts,
-            ExportTable.records_by_kart: tables.kart_record_counts,
-            ExportTable.records_by_tyres: tables.tyres_record_counts,
-            ExportTable.records_by_glider: tables.glider_record_counts
-        }[table]
+        tables = self.master.master.tables_frame
+        records = get_records_from_tables(tables, table)
         return columns, records
 
 
@@ -433,3 +480,216 @@ class DocumentExportationFrame(tk.Frame):
 
     def __init__(self, master: ExportationToplevel) -> None:
         super().__init__(master)
+        self.title = tk.Label(
+            self, font=lato(25, True), text="Export Document")
+        self.info_label = tk.Label(
+            self, text="Select the components below to generate.")
+        self.basic_label = tk.Label(self, font=lato(15, True), text="Basic")
+        self.basic_frame = BasicDocumentExportationOptions(self)
+        self.tables_label = tk.Label(self, font=lato(15, True), text="Tables")
+        self.tables_frame = TableDocumentExportationOptions(
+            self, DOCUMENT_COURSE_CC_EXPORT_TABLES)
+        self.graphs_label = tk.Label(self, font=lato(15, True), text="Graphs")
+        self.graphs_frame = GraphDocumentExportationFrame(self)
+        self.export_docx_button = ttk.Button(
+            self, text="Export DOCX", command=self.export_docx)
+        self.export_pdf_button = ttk.Button(
+            self, text="Export PDF [WARNING: Unstable!]",
+            command=self.export_pdf)
+        
+        self.title.pack(pady=5)
+        self.info_label.pack(pady=5)
+        self.basic_label.pack(pady=5)
+        self.basic_frame.pack(pady=5)
+        self.tables_label.pack(pady=5)
+        self.tables_frame.pack(pady=5)
+        self.graphs_label.pack(pady=5)
+        self.graphs_frame.pack(pady=5)
+        self.export_docx_button.pack(pady=5)
+        self.export_pdf_button.pack(pady=5)
+    
+    def _generate_docx(self) -> docx.document.Document:
+        # Generate DOCX from the configuration options.
+        basic_options = self.basic_frame.options
+        tables = self.tables_frame.selected
+        rows_per_table = self.tables_frame.max_count
+        graphs = self.graphs_frame.selected
+        document: docx.document.Document = docx.Document()
+        document.add_heading(self.master.master.title.cget("text"), 0)
+        if basic_options.current_records or basic_options.summary_stats:
+            self._add_basic(document, basic_options)
+        if tables:
+            self._add_tables(document, tables, rows_per_table)
+        if graphs:
+            self._add_graphs(document, graphs)
+        document.add_heading("Data Context", 1)
+        options_frame = self.master.master.options_frame
+        date_range_text = options_frame.date_range_label.cget("text")
+        data_time_text = options_frame.data_time_label.cget("text")
+        document.add_paragraph(date_range_text)
+        document.add_paragraph(data_time_text)
+        return document
+    
+    def _add_basic(
+        self, document: docx.document.Document,
+        basic_options: BasicDocumentOptions
+    ) -> None:
+        # Adds basic info to the document.
+        if basic_options.current_records:
+            current_records_frame = self.master.master.current_records_frame
+            current_records = current_records_frame.current_records
+            document.add_heading(
+                f"Current Record{'s' if len(current_records) > 1 else ''}", 1)
+            if not current_records:
+                document.add_paragraph("No current record.")
+            else:
+                records_parts = []
+                for record in current_records:
+                    finish_time = ms_to_finish_time(record.time)
+                    lap_times = record.lap_times
+                    if lap_times is not None:
+                        lap_times = tuple(
+                            round(lap / 1000, 3) for lap in lap_times)
+                    parts = (
+                        f"Date: {record.date}", f"Time: {finish_time}",
+                        f"Player: {record.player}",
+                        f"Country: {record.country}",
+                        f"Days lasted: {record.days}",
+                        f"Lap times: {lap_times}",
+                        f"Coins per lap: {record.coins}",
+                        f"Mushrooms per lap: {record.mushrooms}",
+                        f"Character: {record.character}",
+                        f"Kart: {record.kart}", f"Tyres: {record.tyres}",
+                        f"Glider: {record.glider}",
+                        f"Video Link: {record.video_link}")
+                    records_parts.append(parts)
+                if len(records_parts) == 1:
+                    for part in records_parts[0]:
+                        document.add_paragraph(part, style="List Bullet")
+                else:
+                    for parts in records_parts:
+                        document.add_paragraph(
+                            " | ".join(parts), style="List Bullet")
+        if basic_options.summary_stats:
+            document.add_heading("Summary Stats", 1)
+            info_label = self.master.master.info_label
+            points = map(str.strip, info_label.cget("text").split("|"))
+            for point in points:
+                document.add_paragraph(point, style="List Bullet")
+
+    def _add_tables(
+        self, document: docx.document.Document,
+        tables: list[ExportTable], rows_per_table: int
+    ) -> None:
+        # Adds tables to the document.
+        document.add_heading("Tables", 1)
+        tables_frame = self.master.master.tables_frame
+        for table in tables:
+            document.add_heading(table.value, 2)
+            columns = ("#", *EXPORT_TABLES_COLUMNS[table])
+            records = get_records_from_tables(
+                tables_frame, table)[:rows_per_table]
+            add_doctable(document, columns, records)
+    
+    def _add_graphs(
+        self, document: docx.document.Document, graphs: list[ExportGraph]
+    ) -> None:
+        # Adds graphs to the document.
+        document.add_heading("Graphs", 1)
+        graph_functions = {
+            ExportGraph.times: GraphsToplevel.plot_time_against_date,
+            ExportGraph.lap_times: GraphsToplevel.plot_laps_against_date,
+            ExportGraph.coins: lambda m: (
+                GraphsToplevel._plot_item_against_date(m, "coins")),
+            ExportGraph.mushrooms: lambda m: (
+                GraphsToplevel._plot_item_against_date(m, "mushrooms"))
+        }
+        for graph in graphs:
+            graph_function = graph_functions[graph]
+            # Duck typing - keep it simple and dirty.
+            # The master of this widget has master with records as needed.
+            success = graph_function(self.master)
+            if not success:
+                document.add_paragraph(f"{graph.value} graph unavailable.")
+                continue
+            with io.BytesIO() as graph_bytes:
+                plt.savefig(graph_bytes, format="png", dpi=GRAPH_IMAGE_DPI)
+                graph_bytes.seek(0)
+                document.add_picture(graph_bytes, GRAPH_WIDTH, GRAPH_HEIGHT)
+
+    def export_docx(self) -> None:
+        """Exports to DOCX."""
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".docx", filetypes=(("DOCX", ".docx"),),
+            title="Save DOCX", parent=self)
+        if not file_path:
+            return
+        try:
+            document = self._generate_docx()
+            document.save(file_path)
+        except Exception as e:
+            messagebox.showerror(
+                "Error",
+                    "Unfortunately, an error occurred "
+                    f"while exporting to DOCX: {e}", parent=self)
+    
+    def export_pdf(self) -> None:
+        """
+        Exports to PDF by first creating DOCX, then converting to PDF.
+        Not the most stable of operations but at least it's possible.
+        """
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".pdf", filetypes=(("PDF", ".pdf"),),
+            title="Save PDF", parent=self)
+        if not file_path:
+            return
+        try:
+            document = self._generate_docx()
+            save_docx_as_pdf(document, file_path)
+        except Exception as e:
+            messagebox.showerror(
+                "Error",
+                    "Unfortunately, an error occurred "
+                    f"while exporting to PDF: {e}", parent=self)
+
+
+class BasicDocumentExportationOptions(tk.Frame):
+    """
+    Sets whether or not to include current records
+    and summary stats in the document.
+    """
+
+    def __init__(self, master: DocumentExportationFrame) -> None:
+        super().__init__(master)
+        self._current_records = tk.BooleanVar(value=True)
+        self._summary_stats = tk.BooleanVar(value=True)
+        self.current_records_checkbutton = ttk.Checkbutton(
+            self, text="Current Records", variable=self._current_records)
+        self.summary_stats_checkbutton = ttk.Checkbutton(
+            self, text="Summary Stats", variable=self._summary_stats)
+        self.current_records_checkbutton.pack()
+        self.summary_stats_checkbutton.pack()
+    
+    @property
+    def options(self) -> BasicDocumentOptions:
+        return BasicDocumentOptions(
+            self._current_records.get(), self._summary_stats.get())
+
+
+class GraphDocumentExportationFrame(tk.Frame):
+    """Allows the graphs to generate into the document to be selected."""
+
+    def __init__(self, master: DocumentExportationFrame) -> None:
+        super().__init__(master)
+        self._selected = [
+            tk.BooleanVar(value=True)
+            for _ in range(len(COURSE_CC_EXPORT_TABLES))]
+        for var, table in zip(self._selected, COURSE_CC_EXPORT_GRAPHS):
+            checkbutton = ttk.Checkbutton(self, text=table.value, variable=var)
+            checkbutton.pack(padx=5)
+        
+    @property
+    def selected(self) -> list[ExportGraph]:
+        return [
+            table for var, table
+                in zip(self._selected, COURSE_CC_EXPORT_GRAPHS) if var.get()]

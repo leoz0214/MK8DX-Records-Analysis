@@ -1,13 +1,24 @@
 """GUI-specific utilities (avoid module name clash with main utilities)."""
 import csv
 import datetime as dt
+import pathlib
+import platform
+import tempfile
 import tkinter as tk
 from collections import Counter
+from contextlib import suppress
 from tkinter import filedialog
 from tkinter import messagebox
 from tkinter import ttk
 from typing import Callable, Union
 
+try:
+    import comtypes.client as comtypesclient
+except ImportError:
+    comtypesclient = None
+import docx
+with suppress(ImportError):
+    import docx2pdf
 import matplotlib.dates as mdates
 import openpyxl
 import openpyxl.styles
@@ -51,6 +62,11 @@ SPECIAL_DATES = {
 }
 MIN_DATE = dt.date(2017, 1, 1)
 
+MIN_DOCUMENT_TABLE_ROWS = 1
+DEFAULT_DOCUMENT_TABLE_ROWS = 3
+MAX_DOCUMENT_TABLE_ROWS = 10
+
+WORD_EXPORT_PDF_ID = 17
 
 
 def lato(size: int, bold: bool = False, italic: bool = False) -> tuple:
@@ -516,3 +532,92 @@ class TableExportationOptions(tk.Frame):
         return [
             table for var, table in zip(self._selected, self._tables)
                 if var.get()]
+
+
+class TableDocumentExportationOptions(tk.Frame):
+    """Allows the tables to generate into the document to be selected."""
+
+    def __init__(self, master: tk.Frame, tables: tuple) -> None:
+        super().__init__(master)
+        self.tables = tables
+        self._selected = [
+            tk.BooleanVar(value=True)
+            for _ in range(len(tables))]
+        self._max_count = tk.IntVar(value=DEFAULT_DOCUMENT_TABLE_ROWS)
+        for i, (var, table) in enumerate(
+            zip(self._selected, self.tables)
+        ):
+            checkbutton = ttk.Checkbutton(self, text=table.value, variable=var)
+            checkbutton.grid(row=i//2, column=i%2, padx=5)
+        self.max_count_label = tk.Label(self, text="Display top")
+        self.max_count_scale = tk.Scale(
+            self, from_=MIN_DOCUMENT_TABLE_ROWS, to=MAX_DOCUMENT_TABLE_ROWS,
+            orient="horizontal", variable=self._max_count, length=200)
+        self.max_count_label.grid(
+            row=10, column=0, padx=5, pady=5, sticky="ne")
+        self.max_count_scale.grid(
+            row=10, column=1, padx=5, pady=5, sticky="w")
+    
+    @property
+    def max_count(self) -> int:
+        # Top N only for each table (full tables too big in document).
+        return self._max_count.get()
+    
+    @property
+    def selected(self) -> list:
+        return [
+            table for var, table in zip(self._selected, self.tables)
+                if var.get()]
+
+
+def add_doctable(
+    document: docx.document.Document, columns: tuple[str], records: list[tuple]
+) -> None:
+    """Adds a document table given columns and records."""
+    doctable = document.add_table(rows=len(records) + 1, cols=len(columns))
+    doctable.style = "Table Grid"
+    doctable.autofit = True
+    for i, column in enumerate(columns):
+        cell = doctable.cell(0, i)
+        cell.text = str(column)
+        # Make cell (column) text bold.
+        for paragraph in cell.paragraphs:
+            for run in paragraph.runs:
+                run.font.bold = True
+    for i, record in enumerate(records, 1):
+        record = (i, *record)
+        for j, value in enumerate(record):
+            doctable.cell(i, j).text = str(value)
+    for cell in doctable.columns[0].cells:
+        cell.width = 50
+
+
+def save_docx_as_pdf(document: docx.document.Document, file_path: str) -> None:
+    """Attempts to save document to given file path as PDF."""
+    # Create temp file to use as dummy DOCX.
+    with tempfile.NamedTemporaryFile(
+        "wb", suffix=".docx", delete=False
+    ) as f:
+        temp_file_path = pathlib.Path(f.name)
+        document.save(f)
+    try:
+        if platform.system() == "Windows" and comtypesclient is not None:
+            # Use MS Word on windows to attempt conversion.
+            # Avoids weird behaviour of docx2pdf.
+            word = None
+            doc = None
+            try:
+                word = comtypesclient.CreateObject("Word.Application")
+                word.Visible = False
+                doc = word.Documents.Open(str(temp_file_path))
+                doc.SaveAs(file_path, FileFormat=WORD_EXPORT_PDF_ID)
+            finally:
+                if doc is not None:
+                    doc.Close()
+                if word is not None:
+                    word.Quit()
+        else:
+            # For MacOS, attempt conversion using docx2pdf.
+            docx2pdf.convert(temp_file_path, file_path, keep_active=True)
+    finally:
+        temp_file_path.unlink(missing_ok=True)

@@ -11,6 +11,7 @@ from typing import Callable
 import __init__
 import course_cc
 import general
+from const import ICON_FILE
 from gutils import lato, DateRangeSelect
 from utils import COURSES, CUPS
 
@@ -42,6 +43,7 @@ class AnalysisGui(tk.Tk):
         ttk.Style().configure(
             "TNotebook.Tab", font=lato(NOTEBOOK_TAB_SIZE_BY_TABS_OPEN[0]))
         self.title(TITLE)
+        self.iconphoto(True, tk.PhotoImage(file=str(ICON_FILE)))
         self.menu = AnalysisMenu(self)
         self.config(menu=self.menu)
         # Binds Ctrl+N to open a new analysis.

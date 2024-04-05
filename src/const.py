@@ -6,6 +6,7 @@ FOLDER = pathlib.Path(__file__).parent.parent
 
 BIN_FOLDER = FOLDER / "bin"
 LATO_FONT_FILE = BIN_FOLDER / "Lato.ttf"
+ICON_FILE = BIN_FOLDER / "icon.png"
 
 DATA_FOLDER = FOLDER / "data"
 SNAPSHOT_FOLDER = DATA_FOLDER / "snapshots"
