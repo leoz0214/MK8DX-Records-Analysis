@@ -1,5 +1,6 @@
 """General analysis for all courses: 150cc, 200cc, both 150cc and 200cc."""
 import datetime as dt
+import enum
 import tkinter as tk
 from tkinter import ttk
 
@@ -7,10 +8,69 @@ import main
 from gutils import (
     lato, TablesFrame, RankTable, get_date_range_string,
     COURSE_COL_WIDTH, CC_COL_WIDTH, IMPROVEMENT_COL_WIDTH, COUNT_COL_WIDTH,
-    UpdateDateRangeToplevel)
+    DAYS_BY_PLAYER_COLS, RECORDS_BY_PLAYER_COLS, DAYS_BY_COUNTRY_COLS,
+    RECORDS_BY_COUNTRY_COLS, RECORDS_BY_CHARACTER_COLS, RECORDS_BY_KART_COLS,
+    RECORDS_BY_TYRES_COLS, RECORDS_BY_GLIDER_COLS,
+    UpdateDateRangeToplevel, TableExportationFrame, get_raw_records_columns)
 from utils import (
     get_150cc_records, get_200cc_records, get_uniques,
     get_most_recent_snapshot_date_time)
+
+
+class ExportTable(enum.Enum):
+    # Various tables that can be exported as CSV (one) or XLSX (sheets).
+    raw_records = "Raw Records"
+    days_by_player = "Days by Player"
+    records_by_player = "Records by Player"
+    days_by_country = "Days by Country"
+    records_by_country = "Records by Country"
+    records_by_character = "Records by Character"
+    records_by_kart = "Records by Kart"
+    records_by_tyres = "Records by Tyres"
+    records_by_glider = "Records by Glider"
+    current_raw_records = "Current Raw Records"
+    current_days_by_player = "Current Days by Player"
+    current_records_by_player = "Current Records by Player"
+    current_days_by_country = "Current Days by Country"
+    current_records_by_country = "Current Records by Country"
+    current_records_by_character = "Current Records by Character"
+    current_records_by_kart = "Current Records by Kart"
+    current_records_by_tyres = "Current Records by Tyres"
+    current_records_by_glider = "Current Records by Glider"
+    biggest_course_cc_improvements = "Biggest Course-CC Improvements"
+
+
+GENERAL_EXPORT_TABLES = (
+    ExportTable.raw_records, ExportTable.days_by_player,
+    ExportTable.records_by_player, ExportTable.days_by_country,
+    ExportTable.records_by_country, ExportTable.records_by_character,
+    ExportTable.records_by_kart, ExportTable.records_by_tyres,
+    ExportTable.records_by_glider, ExportTable.current_raw_records,
+    ExportTable.current_days_by_player, ExportTable.current_records_by_player,
+    ExportTable.current_days_by_country,
+    ExportTable.current_records_by_country,
+    ExportTable.current_records_by_character,
+    ExportTable.current_records_by_kart, ExportTable.current_records_by_tyres,
+    ExportTable.current_records_by_glider,
+    ExportTable.biggest_course_cc_improvements
+)
+EXPORT_TABLES_COLUMNS = {
+    ExportTable.days_by_player: DAYS_BY_PLAYER_COLS,
+    ExportTable.records_by_player: RECORDS_BY_PLAYER_COLS,
+    ExportTable.days_by_country: DAYS_BY_COUNTRY_COLS,
+    ExportTable.records_by_country: RECORDS_BY_COUNTRY_COLS,
+    ExportTable.records_by_character: RECORDS_BY_CHARACTER_COLS,
+    ExportTable.records_by_kart: RECORDS_BY_KART_COLS,
+    ExportTable.records_by_tyres: RECORDS_BY_TYRES_COLS,
+    ExportTable.records_by_glider: RECORDS_BY_GLIDER_COLS
+}
+# All current variations have the same columns, make it so.
+for table, columns in EXPORT_TABLES_COLUMNS.copy().items():
+    name = str(table).split(".")[1]
+    EXPORT_TABLES_COLUMNS[getattr(ExportTable, f"current_{name}")] = columns
+
+
+COURSE_CC_IMPROVEMENT_COLS = ("Course", "CC", "Count", "Improvement")
 
 
 class GeneralAnalysisFrame(tk.Frame):
@@ -70,15 +130,15 @@ class GeneralAnalysisFrame(tk.Frame):
         course_cc_improvements = dict(
             sorted(course_cc_improvements.items(),
                 key=lambda item: item[1], reverse=True))
-        course_cc_improvements_records = []
+        self.course_cc_improvements_records = []
         for course_cc, improvement in course_cc_improvements.items():
             record = (
                 course_cc[0], 200 if course_cc[1] else 150,
                 course_cc_counter[course_cc], round(improvement / 1000, 3))
-            course_cc_improvements_records.append(record)
+            self.course_cc_improvements_records.append(record)
         self.course_cc_improvements_table = RankTable(
             self, "Biggest Course/CC Improvements",
-            ("Course", "CC", "Count", "Improvement"), course_cc_improvements_records,
+            COURSE_CC_IMPROVEMENT_COLS, self.course_cc_improvements_records,
             column_widths=(
                 COURSE_COL_WIDTH, CC_COL_WIDTH, COUNT_COL_WIDTH,
                 IMPROVEMENT_COL_WIDTH))
@@ -91,7 +151,7 @@ class GeneralAnalysisFrame(tk.Frame):
 
     def export(self) -> None:
         """Allows exportation of the data to various file formats."""
-        pass
+        ExportationToplevel(self)
 
     def update_date_range(
         self, min_date: dt.date | None, max_date: dt.date | None
@@ -195,3 +255,86 @@ class OptionsFrame(tk.Frame):
         self.update_date_range_button.grid(row=1, column=1, padx=5, pady=5)
         self.data_time_label.grid(row=1, column=2, padx=5, pady=5)
         self.refresh_data_button.grid(row=1, column=3, padx=5, pady=5)
+
+
+class ExportationToplevel(tk.Toplevel):
+    """Exportation to CSV, XLSX, DOCX and PDF."""
+
+    def __init__(self, master: GeneralAnalysisFrame) -> None:
+        super().__init__()
+        self.master: GeneralAnalysisFrame = master
+        self.title(f"{master.title.cget('text')} - Data Exportation")
+        self.grab_set()
+        self.notebook = ttk.Notebook(self)
+        self.table_exportation_frame = GeneralTableExportationFrame(self)
+        self.document_exportation_frame = DocumentExportationFrame(self)
+        self.notebook.add(self.table_exportation_frame, text="CSV/XLSX")
+        self.notebook.add(self.document_exportation_frame, text="DOCX/PDF")
+        self.notebook.pack()
+
+
+class GeneralTableExportationFrame(TableExportationFrame):
+    """Genera analysis table exportation subclass."""
+
+    def __init__(self, master: ExportationToplevel) -> None:
+        super().__init__(master, GENERAL_EXPORT_TABLES)
+
+    def get_columns_and_records(
+        self, table: ExportTable
+    ) -> tuple[tuple[str], list[tuple]]:
+        """Gets columns and records for a general table."""
+        if table in (ExportTable.raw_records, ExportTable.current_raw_records):
+            if table == ExportTable.raw_records:
+                db_records = self.master.master.records
+            else:
+                db_records = self.master.master.current_frame.records
+            # Assume baby park included in general analysis - 7 laps max.
+            columns = get_raw_records_columns(7)
+            records = []
+            for record in db_records:
+                export_record = [
+                    record.course, record.is200, record.date, record.time,
+                    record.player, record.country, record.days]
+                for field in ("lap_times", "coins", "mushrooms"):
+                    value = getattr(record, field)
+                    if value is not None:
+                        export_record.extend(value)
+                        export_record.extend([None] * (7 - len(value)))
+                    else:
+                        export_record.extend([None] * 7)
+                export_record.extend(
+                    (record.character, record.kart, record.tyres,
+                        record.glider, record.video_link))
+                records.append(export_record)
+            return columns, records
+        if table == ExportTable.biggest_course_cc_improvements:
+            records = self.master.master.course_cc_improvements_records
+            return COURSE_CC_IMPROVEMENT_COLS, records
+        columns = EXPORT_TABLES_COLUMNS[table]
+        attribute = str(table).split(".")[1]
+        # If it is a current variant, use the current records data
+        # and dummy change the current attribute to normal attribute.
+        if not attribute.startswith("current_"):
+            tables = self.master.master.overall_frame.tables_frame
+        else:
+            tables = self.master.master.current_frame.tables_frame
+            attribute = attribute.removeprefix("current_")
+            table = getattr(ExportTable, attribute)
+        records = {
+            ExportTable.days_by_player: tables.days_by_player_records,
+            ExportTable.records_by_player: tables.player_record_counts,
+            ExportTable.days_by_country: tables.days_by_country_records,
+            ExportTable.records_by_country: tables.country_record_counts,
+            ExportTable.records_by_character: tables.character_record_counts,
+            ExportTable.records_by_kart: tables.kart_record_counts,
+            ExportTable.records_by_tyres: tables.tyres_record_counts,
+            ExportTable.records_by_glider: tables.glider_record_counts
+        }[table]
+        return columns, records   
+
+
+class DocumentExportationFrame(tk.Frame):
+    """Allows the user to export to DOCX or PDF."""
+
+    def __init__(self, master: ExportationToplevel) -> None:
+        super().__init__(master)

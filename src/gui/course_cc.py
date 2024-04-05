@@ -1,29 +1,24 @@
 """Data analysis for course/CC."""
-import csv
 import datetime as dt
 import enum
 import io
 import platform
 import tkinter as tk
-from tkinter import filedialog
-from tkinter import messagebox
 from tkinter import ttk
 from typing import Callable
 
 import matplotlib.dates as mdates
-import openpyxl
-import openpyxl.styles
 from matplotlib import pyplot as plt
 from PIL import ImageTk
 
 import main
 from gutils import (
     lato, TablesFrame, MillisecondsFormatter, get_date_range_string,
-    UpdateDateRangeToplevel, bool_to_state, get_raw_records_columns,
-    DAYS_BY_PLAYER_COLUMNS, RECORDS_BY_PLAYER_COLUMNS, DAYS_BY_COUNTRY_COLUMNS,
-    RECORDS_BY_COUNTRY_COLUMNS, RECORDS_BY_CHARACTER_COLUMNS,
-    RECORDS_BY_KART_COLUMNS, RECORDS_BY_TYRES_COLUMNS,
-    RECORDS_BY_GLIDER_COLUMNS,)
+    UpdateDateRangeToplevel, get_raw_records_columns,
+    DAYS_BY_PLAYER_COLS, RECORDS_BY_PLAYER_COLS, DAYS_BY_COUNTRY_COLS,
+    RECORDS_BY_COUNTRY_COLS, RECORDS_BY_CHARACTER_COLS,
+    RECORDS_BY_KART_COLS, RECORDS_BY_TYRES_COLS,
+    RECORDS_BY_GLIDER_COLS, TableExportationFrame)
 from utils import (
     get_course_cc_records, ms_to_finish_time, get_lap_count,
     get_most_recent_snapshot_date_time, get_uniques)
@@ -54,6 +49,16 @@ COURSE_CC_EXPORT_TABLES = (
     ExportTable.records_by_kart, ExportTable.records_by_tyres,
     ExportTable.records_by_glider
 )
+EXPORT_TABLES_COLUMNS = {
+    ExportTable.days_by_player: DAYS_BY_PLAYER_COLS,
+    ExportTable.records_by_player: RECORDS_BY_PLAYER_COLS,
+    ExportTable.days_by_country: DAYS_BY_COUNTRY_COLS,
+    ExportTable.records_by_country: RECORDS_BY_COUNTRY_COLS,
+    ExportTable.records_by_character: RECORDS_BY_CHARACTER_COLS,
+    ExportTable.records_by_kart: RECORDS_BY_KART_COLS,
+    ExportTable.records_by_tyres: RECORDS_BY_TYRES_COLS,
+    ExportTable.records_by_glider: RECORDS_BY_GLIDER_COLS
+}
 
 
 def set_up_dates_xaxis(dates: list[dt.date]) -> None:
@@ -373,91 +378,19 @@ class ExportationToplevel(tk.Toplevel):
         self.title(f"{master.title.cget('text')} - Data Exportation")
         self.grab_set()
         self.notebook = ttk.Notebook(self)
-        self.table_exportation_frame = TableExportationFrame(self)
+        self.table_exportation_frame = CourseCcTableExportationFrame(self)
         self.document_exportation_frame = DocumentExportationFrame(self)
         self.notebook.add(self.table_exportation_frame, text="CSV/XLSX")
         self.notebook.add(self.document_exportation_frame, text="DOCX/PDF")
         self.notebook.pack()
 
 
-class TableExportationFrame(tk.Frame):
-    """Exportation to CSV or XLSX."""
+class CourseCcTableExportationFrame(TableExportationFrame):
+    """Subclass for Course/CC table exportation."""
 
-    def __init__(self, master: ExportationToplevel) -> None:
-        super().__init__(master)
-        self.title = tk.Label(self, font=lato(25, True), text="Export Tables")
-        self.info_label = tk.Label(
-            self, text=(
-                "Select one or more tables below to export.\n"
-                "Note: CSV is limited to one table, XLSX unlimited."))
-        self.options_frame = TableExportationOptions(self)
-        self.export_csv_button = ttk.Button(
-            self, text="Export CSV", command=self.export_csv)
-        self.export_xlsx_button = ttk.Button(
-            self, text="Export XLSX", command=self.export_xlsx)
-        self.update_button_states()
-        self.title.pack(pady=5)
-        self.info_label.pack(pady=5)
-        self.options_frame.pack(pady=5)
-        self.export_csv_button.pack(pady=5)
-        self.export_xlsx_button.pack(pady=5)
-    
-    def update_button_states(self) -> None:
-        """Updates the export button states."""
-        selected_tables = self.options_frame.tables
-        # Exactly one table selected for CSV export to be allowed.
-        self.export_csv_button.config(
-            state=bool_to_state(len(selected_tables) == 1))
-        # One or more tables selected for XLSX export to be allowed.
-        self.export_xlsx_button.config(state=bool_to_state(selected_tables))
-    
-    def export_csv(self) -> None:
-        """Exports a single table to CSV."""
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".csv", filetypes=(("CSV", ".csv"),),
-            title="Save CSV", parent=self)
-        if not file_path:
-            return
-        table = self.options_frame.tables[0]
-        columns, records = self.get_columns_and_records(table)
-        try:
-            with open(file_path, "w", encoding="utf8") as f:
-                writer = csv.writer(f, lineterminator="\n")
-                writer.writerow(columns)
-                writer.writerows(records)
-        except Exception as e:
-            messagebox.showerror(
-                "Error",
-                    "Unfortunately, an error occurred "
-                    f"while saving the CSV: {e}", master=self)
+    def __init__(self, master: CourseCcAnalysis) -> None:
+        super().__init__(master, COURSE_CC_EXPORT_TABLES)
 
-    def export_xlsx(self) -> None:
-        """Exports one or more tables to XLSX (multiple sheets)."""
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".xlsx", filetypes=(("XLSX", ".xlsx"),),
-            title="Save XLSX", parent=self)
-        if not file_path:
-            return
-        try:
-            workbook = openpyxl.Workbook()
-            workbook.remove(workbook["Sheet"])
-            tables = self.options_frame.tables
-            for table in tables:
-                columns, records = self.get_columns_and_records(table)
-                sheet = workbook.create_sheet(table.value)
-                for i, column in enumerate(columns, 1):
-                    cell = sheet.cell(row=1, column=i)
-                    cell.value = column
-                    cell.font = openpyxl.styles.Font(bold=True)
-                for record in records:
-                    sheet.append(record)
-            workbook.save(file_path)
-        except Exception as e:
-            messagebox.showerror(
-                "Error",
-                    "Unfortunately, an error occurred "
-                    f"while saving the XLSX: {e}", master=self)
-    
     def get_columns_and_records(
         self, table: ExportTable
     ) -> tuple[tuple[str], list[tuple]]:
@@ -480,16 +413,7 @@ class TableExportationFrame(tk.Frame):
                         record.glider, record.video_link))
                 records.append(export_record)
             return columns, records
-        columns = {
-            ExportTable.days_by_player: DAYS_BY_PLAYER_COLUMNS,
-            ExportTable.records_by_player: RECORDS_BY_PLAYER_COLUMNS,
-            ExportTable.days_by_country: DAYS_BY_COUNTRY_COLUMNS,
-            ExportTable.records_by_country: RECORDS_BY_COUNTRY_COLUMNS,
-            ExportTable.records_by_character: RECORDS_BY_CHARACTER_COLUMNS,
-            ExportTable.records_by_kart: RECORDS_BY_KART_COLUMNS,
-            ExportTable.records_by_tyres: RECORDS_BY_TYRES_COLUMNS,
-            ExportTable.records_by_glider: RECORDS_BY_GLIDER_COLUMNS
-        }[table]
+        columns = EXPORT_TABLES_COLUMNS[table]
         tables: TablesFrame = self.master.master.tables_frame
         records = {
             ExportTable.days_by_player: tables.days_by_player_records,
@@ -502,29 +426,6 @@ class TableExportationFrame(tk.Frame):
             ExportTable.records_by_glider: tables.glider_record_counts
         }[table]
         return columns, records
-
-
-class TableExportationOptions(tk.Frame):
-    """Contains the checkbuttons to select the tables to export."""
-
-    def __init__(self, master: TableExportationFrame) -> None:
-        super().__init__(master)
-        self._selected = [
-            tk.BooleanVar(value=False)
-            for _ in range(len(COURSE_CC_EXPORT_TABLES))]
-        for var in self._selected:
-            var.trace("w", lambda *_: master.update_button_states())
-        for i, table in enumerate(COURSE_CC_EXPORT_TABLES):
-            checkbutton = ttk.Checkbutton(
-                self, text=table.value, variable=self._selected[i])
-            checkbutton.pack()
-    
-    @property
-    def tables(self) -> list[ExportTable]:
-        return [
-            table
-            for var, table in zip(self._selected, COURSE_CC_EXPORT_TABLES)
-                if var.get()]
 
 
 class DocumentExportationFrame(tk.Frame):

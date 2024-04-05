@@ -1,31 +1,35 @@
 """GUI-specific utilities (avoid module name clash with main utilities)."""
+import csv
 import datetime as dt
 import tkinter as tk
 from collections import Counter
+from tkinter import filedialog
 from tkinter import messagebox
 from tkinter import ttk
 from typing import Callable, Union
 
 import matplotlib.dates as mdates
+import openpyxl
+import openpyxl.styles
 import pyglet
 from tkcalendar import Calendar
 
 import course_cc
 import general
 from const import LATO_FONT_FILE
-from utils import Record
+from utils import Record, get_lap_count
 
 
 pyglet.font.add_file(str(LATO_FONT_FILE))
 
-DAYS_BY_PLAYER_COLUMNS = ("Player", "Days Held", "%")
-RECORDS_BY_PLAYER_COLUMNS = ("Player", "Records", "%")
-DAYS_BY_COUNTRY_COLUMNS = ("Country", "Days Held", "%")
-RECORDS_BY_COUNTRY_COLUMNS = ("Country", "Records", "%")
-RECORDS_BY_CHARACTER_COLUMNS = ("Character", "Records", "%")
-RECORDS_BY_KART_COLUMNS = ("Kart", "Records", "%")
-RECORDS_BY_TYRES_COLUMNS = ("Tyres", "Records", "%")
-RECORDS_BY_GLIDER_COLUMNS = ("Glider", "Records", "%")
+DAYS_BY_PLAYER_COLS = ("Player", "Days Held", "%")
+RECORDS_BY_PLAYER_COLS = ("Player", "Records", "%")
+DAYS_BY_COUNTRY_COLS = ("Country", "Days Held", "%")
+RECORDS_BY_COUNTRY_COLS = ("Country", "Records", "%")
+RECORDS_BY_CHARACTER_COLS = ("Character", "Records", "%")
+RECORDS_BY_KART_COLS = ("Kart", "Records", "%")
+RECORDS_BY_TYRES_COLS = ("Tyres", "Records", "%")
+RECORDS_BY_GLIDER_COLS = ("Glider", "Records", "%")
 
 
 DEFAULT_RANK_TABLE_HEIGHT = 3
@@ -179,49 +183,49 @@ class TablesFrame(tk.Frame):
         self.days_by_player_records = sort_by_days_held(
             master.records, master.unique_players, "player")
         self.days_by_player_frame = RankTable(
-            self, "Days by Player", DAYS_BY_PLAYER_COLUMNS,
+            self, "Days by Player", DAYS_BY_PLAYER_COLS,
             self.days_by_player_records, column_widths=(
                 PLAYER_COL_WIDTH, COUNT_COL_WIDTH, PERCENTAGE_COL_WIDTH))
         self.player_record_counts = (
             sort_by_records_count(master.records, "player"))
         self.player_records_counts_frame = RankTable(
-            self, "Records by Player", RECORDS_BY_PLAYER_COLUMNS,
+            self, "Records by Player", RECORDS_BY_CHARACTER_COLS,
             self.player_record_counts, column_widths=(
                 PLAYER_COL_WIDTH, COUNT_COL_WIDTH, PERCENTAGE_COL_WIDTH))
         self.days_by_country_records = sort_by_days_held(
             master.records, master.unique_countries, "country")
         self.days_by_country_frame = RankTable(
-            self, "Days by Country", DAYS_BY_COUNTRY_COLUMNS,
+            self, "Days by Country", DAYS_BY_COUNTRY_COLS,
             self.days_by_country_records, column_widths=(
                 COUNTRY_COL_WIDTH, COUNT_COL_WIDTH, PERCENTAGE_COL_WIDTH))
         self.country_record_counts = (
             sort_by_records_count(master.records, "country"))
         self.country_records_counts_frame = RankTable(
-            self, "Records by Country", RECORDS_BY_COUNTRY_COLUMNS,
+            self, "Records by Country", RECORDS_BY_COUNTRY_COLS,
             self.country_record_counts, column_widths=(
                 COUNTRY_COL_WIDTH, COUNT_COL_WIDTH, PERCENTAGE_COL_WIDTH))
 
         self.character_record_counts = (
             sort_by_records_count(master.records, "character"))
         self.character_records_counts_frame = RankTable(
-            self, "Records by Character", RECORDS_BY_CHARACTER_COLUMNS,
+            self, "Records by Character", RECORDS_BY_CHARACTER_COLS,
             self.character_record_counts, column_widths=(
                 BUILD_COL_WIDTH, COUNT_COL_WIDTH, PERCENTAGE_COL_WIDTH))
         self.kart_record_counts = sort_by_records_count(master.records, "kart")
         self.kart_records_counts_frame = RankTable(
-            self, "Records by Kart", RECORDS_BY_KART_COLUMNS,
+            self, "Records by Kart", RECORDS_BY_KART_COLS,
             self.kart_record_counts, column_widths=(
                 BUILD_COL_WIDTH, COUNT_COL_WIDTH, PERCENTAGE_COL_WIDTH))
         self.tyres_record_counts = (
             sort_by_records_count(master.records, "tyres"))
         self.tyres_records_counts_frame = RankTable(
-            self, "Records by Tyres", RECORDS_BY_TYRES_COLUMNS,
+            self, "Records by Tyres", RECORDS_BY_TYRES_COLS,
             self.tyres_record_counts, column_widths=(
                 BUILD_COL_WIDTH, COUNT_COL_WIDTH, PERCENTAGE_COL_WIDTH))
         self.glider_record_counts = (
             sort_by_records_count(master.records, "glider"))
         self.glider_records_counts_frame = RankTable(
-            self, "Records by Glider", RECORDS_BY_GLIDER_COLUMNS,
+            self, "Records by Glider", RECORDS_BY_GLIDER_COLS,
             self.glider_record_counts, column_widths=(
                 BUILD_COL_WIDTH, COUNT_COL_WIDTH, PERCENTAGE_COL_WIDTH))
         self.days_by_player_frame.grid(row=0, column=0, padx=3, pady=3)
@@ -402,3 +406,113 @@ class UpdateDateRangeToplevel(tk.Toplevel):
         start_date = self.date_selection_frame.start_date
         end_date = self.date_selection_frame.end_date
         self.callback(start_date, end_date)
+
+
+class TableExportationFrame(tk.Frame):
+    """Exportation to CSV or XLSX."""
+
+    def __init__(
+        self, master: Union[
+            "course_cc.ExportationToplevel", "general.ExportationToplevel"],
+        tables: tuple
+    ) -> None:
+        super().__init__(master)
+        self.title = tk.Label(self, font=lato(25, True), text="Export Tables")
+        self.info_label = tk.Label(
+            self, text=(
+                "Select one or more tables below to export.\n"
+                "Note: CSV is limited to one table, XLSX unlimited."))
+        self.options_frame = TableExportationOptions(self, tables)
+        self.export_csv_button = ttk.Button(
+            self, text="Export CSV", command=self.export_csv)
+        self.export_xlsx_button = ttk.Button(
+            self, text="Export XLSX", command=self.export_xlsx)
+        self.update_button_states()
+        self.title.pack(pady=5)
+        self.info_label.pack(pady=5)
+        self.options_frame.pack(pady=5)
+        self.export_csv_button.pack(pady=5)
+        self.export_xlsx_button.pack(pady=5)
+    
+    def update_button_states(self) -> None:
+        """Updates the export button states."""
+        selected_tables = self.options_frame.tables
+        # Exactly one table selected for CSV export to be allowed.
+        self.export_csv_button.config(
+            state=bool_to_state(len(selected_tables) == 1))
+        # One or more tables selected for XLSX export to be allowed.
+        self.export_xlsx_button.config(state=bool_to_state(selected_tables))
+    
+    def export_csv(self) -> None:
+        """Exports a single table to CSV."""
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".csv", filetypes=(("CSV", ".csv"),),
+            title="Save CSV", parent=self)
+        if not file_path:
+            return
+        table = self.options_frame.tables[0]
+        try:
+            columns, records = self.get_columns_and_records(table)
+            with open(file_path, "w", encoding="utf8") as f:
+                writer = csv.writer(f, lineterminator="\n")
+                writer.writerow(columns)
+                writer.writerows(records)
+        except Exception as e:
+            messagebox.showerror(
+                "Error",
+                    "Unfortunately, an error occurred "
+                    f"while saving the CSV: {e}", master=self)
+
+    def export_xlsx(self) -> None:
+        """Exports one or more tables to XLSX (multiple sheets)."""
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=(("XLSX", ".xlsx"),),
+            title="Save XLSX", parent=self)
+        if not file_path:
+            return
+        try:
+            workbook = openpyxl.Workbook()
+            workbook.remove(workbook["Sheet"])
+            tables = self.options_frame.tables
+            for table in tables:
+                columns, records = self.get_columns_and_records(table)
+                sheet = workbook.create_sheet(table.value)
+                for i, column in enumerate(columns, 1):
+                    cell = sheet.cell(row=1, column=i)
+                    cell.value = column
+                    cell.font = openpyxl.styles.Font(bold=True)
+                for record in records:
+                    sheet.append(record)
+            workbook.save(file_path)
+        except Exception as e:
+            messagebox.showerror(
+                "Error",
+                    "Unfortunately, an error occurred "
+                    f"while saving the XLSX: {e}", master=self)
+    
+    def get_columns_and_records(self, _) -> tuple[tuple[str], list[tuple]]:
+        # Needs to be subclassed and implemented in derived class.
+        raise NotImplementedError
+
+
+class TableExportationOptions(tk.Frame):
+    """Contains the checkbuttons to select the tables to export."""
+
+    def __init__(self, master: TableExportationFrame, tables: tuple) -> None:
+        super().__init__(master)
+        self._tables = tables
+        self._selected = [
+            tk.BooleanVar(value=False)
+            for _ in range(len(tables))]
+        for var in self._selected:
+            var.trace("w", lambda *_: master.update_button_states())
+        for i, table in enumerate(self._tables):
+            checkbutton = ttk.Checkbutton(
+                self, text=table.value, variable=self._selected[i])
+            checkbutton.pack()
+    
+    @property
+    def tables(self) -> list:
+        return [
+            table for var, table in zip(self._selected, self._tables)
+                if var.get()]
