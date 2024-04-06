@@ -595,9 +595,7 @@ def add_doctable(
 def save_docx_as_pdf(document: docx.document.Document, file_path: str) -> None:
     """Attempts to save document to given file path as PDF."""
     # Create temp file to use as dummy DOCX.
-    with tempfile.NamedTemporaryFile(
-        "wb", suffix=".docx", delete=False
-    ) as f:
+    with tempfile.NamedTemporaryFile("wb", suffix=".docx", delete=False) as f:
         temp_file_path = pathlib.Path(f.name)
         document.save(f)
     try:

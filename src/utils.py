@@ -149,11 +149,28 @@ def get_most_recent_snapshot() -> pathlib.Path:
             "No records snapshots found. Please run the scraping script.")
 
 
+def get_second_most_recent_snapshot() -> pathlib.Path:
+    """Returns the file path of the second most recent snapshot."""
+    try:
+        return sorted(SNAPSHOT_FOLDER.rglob("*.db"))[-2]
+    except IndexError:
+        raise IndexError("Less than 2 snapshots found.")
+
+
+def get_date_time_from_snapshot_path(path: pathlib.Path) -> dt.datetime:
+    """Returns the date/time of a snapshot given its file path."""
+    filename = path.stem
+    return dt.datetime.strptime(filename, "%Y-%m-%dT%H%M%S.%f")
+
+
 def get_most_recent_snapshot_date_time() -> dt.datetime:
     """Returns the date/time of the most recent snapshot."""
-    snapshot = get_most_recent_snapshot()
-    filename = snapshot.stem
-    return dt.datetime.strptime(filename, "%Y-%m-%dT%H%M%S.%f")
+    return get_date_time_from_snapshot_path(get_most_recent_snapshot())
+
+
+def get_second_most_recent_snapshot_date_time() -> dt.datetime:
+    """Returns the date/time of the 2nd most recent snapshot."""
+    return get_date_time_from_snapshot_path(get_second_most_recent_snapshot())
 
 
 def process_db_record(record: tuple) -> Record:
@@ -199,10 +216,12 @@ def get_course_cc_records(
 
 
 def get_cc_records(
-    is200: bool, min_date: dt.date | None, max_date: dt.date | None
-) -> None:
+    is200: bool, min_date: dt.date | None = None,
+    max_date: dt.date | None = None, database_path: str = None
+) -> list[Record]:
     """Returns all records from all courses for a given cubic capacity."""
-    database_path = get_most_recent_snapshot()
+    if database_path is None:
+        database_path = get_most_recent_snapshot()
     params = [is200]
     where_parts = ["is200 = ?"]
     if min_date is not None:
@@ -233,7 +252,7 @@ def get_200cc_records(
     return get_cc_records(True, min_date, max_date)
 
 
-def get_uniques(records: list[Record]) -> tuple[set]:
+def get_uniques(records: list[Record]) -> tuple[set[str]]:
     """
     Returns unique players, countries, characters, karts, tyres and gliders.
     They are all returned as sets, so order is not preserved.
@@ -243,12 +262,9 @@ def get_uniques(records: list[Record]) -> tuple[set]:
     # Ignore 'None'
     unique_characters = set(
         record.character for record in records if record.character)
-    unique_karts = set(
-        record.kart for record in records if record.kart)
-    unique_tyres = set(
-        record.tyres for record in records if record.tyres)
-    unique_gliders = set(
-        record.glider for record in records if record.glider)
+    unique_karts = set(record.kart for record in records if record.kart)
+    unique_tyres = set(record.tyres for record in records if record.tyres)
+    unique_gliders = set(record.glider for record in records if record.glider)
     return (
         unique_players, unique_countries, unique_characters,
         unique_karts, unique_tyres, unique_gliders)

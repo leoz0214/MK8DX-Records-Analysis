@@ -160,14 +160,8 @@ def scrape_course(course: str, is200: bool) -> list[Record]:
 
 
 def main() -> None:
-    """Main procedure of the program."""
+    """Main procedure of the scraper."""
     SNAPSHOT_FOLDER.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        handlers=(
-            logging.FileHandler(SCRAPE_LOG_FILE), logging.StreamHandler()),
-        encoding="utf8", level=logging.INFO,
-        format= "%(asctime)s: %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S")
     records = []
     for course in COURSES:
         for cc in (150, 200):
@@ -188,4 +182,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        handlers=(
+            logging.FileHandler(SCRAPE_LOG_FILE), logging.StreamHandler()),
+        encoding="utf8", level=logging.INFO,
+        format= "%(asctime)s: %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S")
     main()
