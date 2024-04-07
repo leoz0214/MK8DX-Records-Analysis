@@ -13,7 +13,7 @@ import course_cc
 import general
 from const import ICON_FILE
 from gutils import lato, DateRangeSelect
-from utils import COURSES, CUPS
+from utils import COURSES, CUPS, get_most_recent_snapshot
 
 
 TITLE = "MK8DX Records Analysis"
@@ -313,6 +313,15 @@ class GeneralSelectionToplevel(tk.Toplevel):
 def main() -> None:
     """Main procedure of the program."""
     ctypes.windll.shcore.SetProcessDpiAwareness(True)
+    # Ensures at least 1 snapshot available.
+    try:
+        get_most_recent_snapshot()
+    except IndexError:
+        messagebox.showerror(
+            "No data",
+                "Please run the scraping script and obtain a "
+                "data snapshot before running the GUI program.")
+        return
     AnalysisGui().mainloop()
 
 

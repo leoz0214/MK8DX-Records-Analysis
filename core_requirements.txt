@@ -1,0 +1,7 @@
+# Vital requirements if using any component of the project.
+
+# Sends requests to the world records website to collect the raw data.
+requests
+
+# Parses the returned HTML web pages to retrieve the data.
+beautifulsoup4

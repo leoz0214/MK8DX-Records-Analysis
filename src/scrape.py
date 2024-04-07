@@ -8,7 +8,6 @@ import time
 import urllib.parse
 from timeit import default_timer as timer
 
-import lxml
 import requests as rq
 from bs4 import BeautifulSoup
 
@@ -39,7 +38,12 @@ def get_soup(course: str, is200: bool) -> BeautifulSoup:
             response = rq.get(f"{URL}?{query_string}")
             if response.status_code != 200:
                 raise RuntimeError(f"Status code {response.status_code}")
-            return BeautifulSoup(response.text, "lxml")
+            try:
+                # Attempt to use LXML (more efficient)
+                return BeautifulSoup(response.text, "lxml")
+            except Exception:
+                # Built-in HTML parser as fallback.
+                return BeautifulSoup(response.text, "html.parser")
         except Exception as e:
             attempts -= 1
             if not attempts:

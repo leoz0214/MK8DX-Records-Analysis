@@ -1,0 +1,21 @@
+# Additional requirements only required for the GUI app.
+# Assumes core requriements have been installed.
+
+# Renders the custom font.
+pyglet
+
+# Provides a convenient calendar widget (avoid reinventing the wheel).
+tkcalendar
+
+# Graph plotting.
+matplotlib
+
+# Exports to XLSX.
+openpyxl
+
+# Exports to DOCX (and also PDF).
+python-docx
+
+# DOCX to PDF conversion by system (Windows, MacOS only). 
+comtypes; platform_system == "Windows"
+docx2pdf; platform_system == "Darwin"

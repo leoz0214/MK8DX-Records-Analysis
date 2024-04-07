@@ -28,7 +28,7 @@ from tkcalendar import Calendar
 import course_cc
 import general
 from const import LATO_FONT_FILE
-from utils import Record, get_lap_count
+from utils import Record
 
 
 pyglet.font.add_file(str(LATO_FONT_FILE))

@@ -1,0 +1,5 @@
+# Requirements for the email script only.
+# Assumes core requirements have been installed.
+
+# Generates a HTML email document in an elegant way.
+dominate

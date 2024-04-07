@@ -15,7 +15,6 @@ import docx.document
 import matplotlib.dates as mdates
 from docx.shared import Inches
 from matplotlib import pyplot as plt
-from PIL import ImageTk
 
 import main
 from gutils import (
@@ -412,7 +411,7 @@ class GraphFrame(tk.Frame):
         with io.BytesIO() as f:
             plt.savefig(f, format="png", dpi=GRAPH_IMAGE_DPI)
             f.seek(0)
-            self.graph_image = ImageTk.PhotoImage(file=f, format="png")
+            self.graph_image = tk.PhotoImage(data=f.read(), format="png")
         self.graph_image_label = tk.Label(self, image=self.graph_image)
         self.view_button = ttk.Button(
             self, text="View", command=self.view)
